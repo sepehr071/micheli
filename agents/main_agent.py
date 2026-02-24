@@ -24,6 +24,7 @@ from config.language import (
     language_manager,
     get_language_instruction,
     get_language_prefix,
+    lang_hint,
 )
 from prompt.static_main_agent import CONVERSATION_AGENT_PROMPT, CONVERSATION_AGENT_GREETING
 from utils.helpers import get_greeting, is_valid_email_syntax
@@ -65,6 +66,7 @@ class ConversationAgent(Agent):
         self.room = room
         self.search_pipeline = ProductSearchPipeline()
         self._original_instructions = CONVERSATION_AGENT_PROMPT
+        self._lang_listener_active = True
 
         # Register data received callback for language updates
         self._setup_data_listener()
@@ -93,6 +95,8 @@ class ConversationAgent(Agent):
 
     async def _handle_data_received(self, data: DataPacket) -> None:
         """Handle incoming data packets from frontend."""
+        if not self._lang_listener_active:
+            return
         try:
             payload = (
                 data.data.decode("utf-8") if isinstance(data.data, bytes) else data.data
@@ -116,6 +120,8 @@ class ConversationAgent(Agent):
     async def _update_agent_instructions(self) -> None:
         """Update the agent's instructions with current language setting."""
         try:
+            # Capture language immediately before any await to prevent stale reads
+            new_lang = language_manager.get_language()
             instructions = self._original_instructions
             new_instructions = (
                 get_language_prefix() + instructions + get_language_instruction()
@@ -125,8 +131,7 @@ class ConversationAgent(Agent):
             if hasattr(self, "_activity") and self._activity:
                 await self._activity.update_instructions(new_instructions)
 
-            # Update transcription language hint
-            new_lang = language_manager.get_language()
+            # Update transcription language hint (uses captured new_lang)
             if hasattr(self, "session") and self.session and self.session.llm:
                 try:
                     from livekit.plugins.openai import AudioTranscription
@@ -137,7 +142,7 @@ class ConversationAgent(Agent):
                         ),
                     )
                 except Exception as e:
-                    logger.debug(f"Could not update transcription language: {e}")
+                    logger.warning(f"Could not update transcription language to {new_lang}: {e}")
 
             logger.info(f"Agent instructions updated for language: {new_lang}")
         except Exception as e:
@@ -183,19 +188,19 @@ class ConversationAgent(Agent):
     def _format_pinecone_results_for_llm(self, results: List[Dict[str, Any]], max_results: int = 5) -> str:
         """Format Pinecone search results for LLM context."""
         if not results:
-            return "Keine passenden Behandlungen gefunden."
+            return f"No matching treatments found. {lang_hint()}"
 
         formatted = []
         for item in results[:max_results]:
-            name = item.get("name", "Unbekannte Behandlung")
+            name = item.get("name", "Unknown treatment")
             desc_parts = [f"**{name}**"]
 
             if "Introduction" in item:
-                desc_parts.append(f"Beschreibung: {item['Introduction']}")
+                desc_parts.append(f"Description: {item['Introduction']}")
             if "Features" in item:
                 desc_parts.append(f"Details: {item['Features']}")
             if "Benefits to Clients" in item:
-                desc_parts.append(f"Vorteile: {item['Benefits to Clients']}")
+                desc_parts.append(f"Benefits: {item['Benefits to Clients']}")
             if "url" in item:
                 desc_parts.append(f"URL: {item['url']}")
 
@@ -258,15 +263,7 @@ class ConversationAgent(Agent):
             return await self._search_treatments_inner(query, category, mentioned_treatments)
         except Exception as e:
             logger.error(f"search_treatments failed: {e}")
-            return (
-                AGENT_MESSAGES.get(
-                    "search_unavailable",
-                    "Es tut mir leid, ich kann gerade nicht auf die Behandlungsinformationen "
-                    "zugreifen. Bitte versuchen Sie es erneut.",
-                )
-                + "\n"
-                + CONVERSATION_RULES
-            )
+            return f"Search temporarily unavailable. Ask customer to try again. {lang_hint()}"
 
     async def _search_treatments_inner(
         self,
@@ -289,7 +286,7 @@ class ConversationAgent(Agent):
         cleaned_history = normalize_messages(history)
 
         if cleaned_history and cleaned_history[-1]["role"] != "user":
-            return AGENT_MESSAGES.get("wait_for_customer", "Warte auf Kundennachricht.")
+            return f"Waiting for customer message. {lang_hint()}"
 
         # Update search counter
         self.userdata.search_count += 1
@@ -385,7 +382,7 @@ class ConversationAgent(Agent):
         )
         self.userdata.lead_reasoning = reasoning.strip()
         logger.info(f"Lead assessed: score={score}, level={level}, reason={reasoning}")
-        return "Lead-Bewertung gespeichert. Setze das Gespräch fort."
+        return f"Lead assessment saved. Continue naturally. {lang_hint()}"
 
     # ══════════════════════════════════════════════════════════════════════════
     # FUNCTION TOOL 3 — OFFER EXPERT CONNECTION
@@ -409,7 +406,7 @@ class ConversationAgent(Agent):
         except Exception as e:
             logger.error(f"Failed to send expert buttons: {e}")
         logger.info("Expert connection offered to customer")
-        return "Buttons gesendet. Warte auf die Antwort der Kundin."
+        return f"Buttons sent. Wait for customer response. {lang_hint()}"
 
     # ══════════════════════════════════════════════════════════════════════════
     # FUNCTION TOOL 4 — HANDLE EXPERT RESPONSE
@@ -427,11 +424,10 @@ class ConversationAgent(Agent):
         logger.info(f"Expert response: accepted={accepted}")
         if not accepted:
             await self._safe_reply(
-                "Kein Problem! Ich helfe Ihnen gerne weiter mit Ihren Fragen "
-                "zu unseren Behandlungen."
+                "No problem! I'm happy to help with any other questions about our treatments."
             )
-            return "Kundin hat abgelehnt. Antwort wurde generiert."
-        return "Kundin hat zugestimmt. Sammle jetzt die Kontaktdaten."
+            return f"Customer declined. Reply generated. {lang_hint()}"
+        return f"Customer accepted. Collect contact info now. {lang_hint()}"
 
     # ══════════════════════════════════════════════════════════════════════════
     # FUNCTION TOOL 5 — SAVE CONTACT INFO
@@ -464,14 +460,14 @@ class ConversationAgent(Agent):
                 self.userdata.email = email.strip().lower()
                 logger.info(f"Saved email: {self.userdata.email}")
             else:
-                return "Die E-Mail-Adresse scheint nicht gueltig zu sein. Bitte fragen Sie erneut."
+                return f"Email seems invalid. Ask customer again. {lang_hint()}"
         if phone:
             self.userdata.phone = phone.strip()
             logger.info(f"Saved phone: {self.userdata.phone}")
         if preferred_contact and preferred_contact in ("phone", "whatsapp", "email"):
             self.userdata.preferred_contact = preferred_contact
             logger.info(f"Saved preferred contact: {preferred_contact}")
-        return "Gespeichert. Setze das Gespräch natürlich fort."
+        return f"Saved. Continue naturally. {lang_hint()}"
 
     # ══════════════════════════════════════════════════════════════════════════
     # FUNCTION TOOL 6 — RECORD CONSENT
@@ -488,7 +484,7 @@ class ConversationAgent(Agent):
         """
         self.userdata.consent_given = consent
         logger.info(f"Consent recorded: {consent}")
-        return "Einwilligung gespeichert. Setze das Gespräch fort."
+        return f"Consent recorded. Continue. {lang_hint()}"
 
     # ══════════════════════════════════════════════════════════════════════════
     # FUNCTION TOOL 7 — SCHEDULE APPOINTMENT
@@ -508,7 +504,7 @@ class ConversationAgent(Agent):
         self.userdata.schedule_date = date.strip()
         self.userdata.schedule_time = time.strip()
         logger.info(f"Appointment scheduled: {date} at {time}")
-        return "Termin gespeichert. Bestätige der Kundin den Termin."
+        return f"Appointment saved. Confirm with customer. {lang_hint()}"
 
     # ══════════════════════════════════════════════════════════════════════════
     # FUNCTION TOOL 8 — SAVE CONVERSATION SUMMARY
@@ -524,7 +520,7 @@ class ConversationAgent(Agent):
         """
         logger.info(f"Conversation summary: {summary}")
         self.userdata.conversation_summary = summary.strip()
-        return "Zusammenfassung gespeichert."
+        return f"Summary saved. {lang_hint()}"
 
     # ══════════════════════════════════════════════════════════════════════════
     # FUNCTION TOOL 9 — COMPLETE CONTACT COLLECTION
@@ -542,14 +538,18 @@ class ConversationAgent(Agent):
         if not self.userdata.name:
             missing.append("Name")
         if not self.userdata.email and not self.userdata.phone:
-            missing.append("E-Mail oder Telefon")
+            missing.append("Email or Phone")
         if self.userdata.preferred_contact == "phone" and not self.userdata.phone:
-            missing.append("Telefonnummer (Rueckruf gewuenscht)")
+            missing.append("Phone number (callback requested)")
         if not self.userdata.consent_given:
-            missing.append("Einwilligung zur Kontaktaufnahme")
+            missing.append("Consent to be contacted")
 
         if missing:
-            return f"Noch fehlend: {', '.join(missing)}. Bitte fragen Sie die Kundin danach."
+            missing_str = ", ".join(missing)
+            return f"Still missing: {missing_str}. Ask customer. {lang_hint()}"
+
+        # Deactivate language listener before handoff to avoid duplicate updates
+        self._lang_listener_active = False
 
         # Send clean signal to frontend
         try:
@@ -578,7 +578,7 @@ class ConversationAgent(Agent):
         a visual overview. Do NOT call this again — it only works once.
         """
         if self.userdata.featured_shown:
-            return "Bereits angezeigt. Nicht erneut aufrufen."
+            return f"Already shown. Do not call again. {lang_hint()}"
 
         self.userdata.featured_shown = True
 
@@ -609,7 +609,7 @@ class ConversationAgent(Agent):
         except Exception as e:
             logger.error(f"Failed to send featured products: {e}")
 
-        return "Behandlungen werden angezeigt. Setze das Gespraech natuerlich fort."
+        return f"Treatments displayed. Continue naturally. {lang_hint()}"
 
     # ══════════════════════════════════════════════════════════════════════════
     # TRANSCRIPTION — streams text to frontend via "message" topic

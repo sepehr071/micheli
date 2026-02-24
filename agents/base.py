@@ -16,7 +16,7 @@ from livekit.plugins import openai
 from core.session_state import UserData, RunContext_T
 from config.settings import RT_MODEL, LLM_TEMPERATURE
 from config.messages import AGENT_MESSAGES
-from config.language import get_language_instruction, get_language_prefix, handle_language_update, language_manager
+from config.language import get_language_instruction, get_language_prefix, handle_language_update, language_manager, lang_hint
 import prompt.static_workflow as prompts
 
 logger = logging.getLogger(__name__)
@@ -88,6 +88,7 @@ class BaseAgent(Agent):
         self.room = room
         self._add_instruction = add_instruction
         self._original_instructions = instructions  # Store for language updates
+        self._lang_listener_active = True
 
         # Set up data listener for language updates
         self._setup_data_listener()
@@ -115,6 +116,8 @@ class BaseAgent(Agent):
 
     async def _handle_data_received(self, data: DataPacket) -> None:
         """Handle incoming data packets from frontend."""
+        if not self._lang_listener_active:
+            return
         try:
             # Decode the data payload
             payload = data.data.decode("utf-8") if isinstance(data.data, bytes) else data.data
@@ -139,6 +142,8 @@ class BaseAgent(Agent):
     async def _update_agent_instructions(self) -> None:
         """Update the agent's instructions with current language setting."""
         try:
+            # Capture language immediately before any await to prevent stale reads
+            new_lang = language_manager.get_language()
             instructions = self._original_instructions
             if self._add_instruction:
                 instructions = prompts.BaseAgentPrompt.format(user_info=str(self.userdata)) + "\n" + instructions
@@ -148,8 +153,7 @@ class BaseAgent(Agent):
             if hasattr(self, '_activity') and self._activity:
                 await self._activity.update_instructions(new_instructions)
 
-            # Update transcription language hint
-            new_lang = language_manager.get_language()
+            # Update transcription language hint (uses captured new_lang)
             if hasattr(self, "session") and self.session and self.session.llm:
                 try:
                     from livekit.plugins.openai import AudioTranscription
@@ -160,7 +164,7 @@ class BaseAgent(Agent):
                         ),
                     )
                 except Exception as e:
-                    logger.debug(f"Could not update transcription language: {e}")
+                    logger.warning(f"Could not update transcription language to {new_lang}: {e}")
 
             logger.info(f"Agent instructions updated for language: {new_lang}")
         except Exception as e:
@@ -180,7 +184,7 @@ class BaseAgent(Agent):
         """
         logger.info(f"Conversation summary (BaseAgent): {summary}")
         self.userdata.conversation_summary = summary.strip()
-        return "Zusammenfassung gespeichert."
+        return f"Summary saved. {lang_hint()}"
 
     async def transcription_node(self, text: AsyncIterable[str], model_settings: ModelSettings) -> AsyncIterable[str]:
         agent_response = ""

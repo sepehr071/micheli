@@ -23,11 +23,11 @@ COMPANY = {
         "info@beauty-lounge-warendorf.de",
     ],
     "email_closing": "Mit freundlichen Grüßen,\nIhr Beauty Lounge Team\nwww.beauty-lounge-warendorf.de",
-    "greetings": {                                            # Time-of-day greetings
-        "morning": "Guten Morgen!",                           # (05:00–11:59)
-        "afternoon": "Guten Tag!",                            # (12:00–17:59)
-        "evening": "Guten Abend!",                            # (18:00–21:59)
-        "night": "Hallo!",                                    # (22:00–04:59)
+    "greetings": {
+        "morning": "Good morning!",
+        "afternoon": "Good afternoon!",
+        "evening": "Good evening!",
+        "night": "Hello!",
     },
     "headquarters": "Warendorf, Nordrhein-Westfalen, Germany",
     "founded": "2005",

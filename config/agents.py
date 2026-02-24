@@ -13,7 +13,7 @@ from config.services import SERVICES
 
 MAIN_AGENT = {
     "name": "Lena",                                   # Assistant's display name
-    "role": "Beauty-Beraterin",                       # "Beauty Consultant"
+    "role": "Beauty Consultant",                       # "Beauty Consultant"
     "personality": "professional and helpful",        # "Professional and helpful"
     "expertise": PRODUCTS["specialties"],             # Treatment areas of expertise
     "max_words": 60,                                  # Max words per response
@@ -34,7 +34,7 @@ MAIN_AGENT = {
 # =============================================================================
 
 BASE_AGENT = {
-    "role": "Beauty-Beraterin",                      # "Beauty Consultant"
+    "role": "Beauty Consultant",                      # "Beauty Consultant"
     "personality": "friendly and professional",       # "Friendly and professional"
     "max_words": 50,                                  # Max words per response
     "rules": [                                        # Behavior rules for sub-agents

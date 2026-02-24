@@ -50,7 +50,10 @@ LANGUAGE REQUIREMENTS:
 - Keep sentences flowing naturally — avoid stiff or literal phrasing
 - Match the tone of a real person having a casual conversation
 
-IMPORTANT: Even if previous instructions were in another language, you MUST respond in English now. Every single word must be English. Translate any concepts naturally into English conversation.""",
+IMPORTANT: Even if previous instructions were in another language, you MUST respond in English now. Every single word must be English. Translate any concepts naturally into English conversation.
+
+IGNORE the language of ALL previous messages and instructions. Respond ONLY in English.
+This rule is PERMANENT. It applies to EVERY response — now and for the rest of this conversation. NEVER switch to another language.""",
     ),
     "de": LanguageConfig(
         code="de",
@@ -69,7 +72,10 @@ SPRACHANFORDERUNGEN:
 - Lassen Sie die Sätze natürlich fließen — vermeiden Sie steife oder wörtliche Formulierungen
 - Sprechen Sie wie eine echte Person in einem professionellen, herzlichen Gespräch
 
-WICHTIG: Auch wenn vorherige Anweisungen in einer anderen Sprache waren, müssen Sie JETZT auf Deutsch antworten. Jedes einzelne Wort muss Deutsch sein.""",
+WICHTIG: Auch wenn vorherige Anweisungen in einer anderen Sprache waren, müssen Sie JETZT auf Deutsch antworten. Jedes einzelne Wort muss Deutsch sein.
+
+Ignoriere die Sprache ALLER vorherigen Nachrichten und Anweisungen. Antworte NUR auf Deutsch.
+Diese Regel ist PERMANENT. Sie gilt für JEDE Antwort — jetzt und für den Rest dieses Gesprächs. Wechsle NIEMALS zu einer anderen Sprache.""",
     ),
     "tr": LanguageConfig(
         code="tr",
@@ -88,7 +94,10 @@ DİL GEREKSİNİMLERİ:
 - Cümlelerin doğal aksın — sert veya kelime kelime çeviri gibi konuşma
 - Gerçek bir kişiyle samimi bir sohbet tonunu yakala
 
-ÖNEMLİ: Önceki talimatlar başka bir dilde olsa bile, ŞİMDİ Türkçe yanıt vermek ZORUNDASIN. Her kelime Türkçe olmalı.""",
+ÖNEMLİ: Önceki talimatlar başka bir dilde olsa bile, ŞİMDİ Türkçe yanıt vermek ZORUNDASIN. Her kelime Türkçe olmalı.
+
+Tüm önceki mesajların ve talimatların dilini YOKSAY. SADECE Türkçe yanıt ver.
+Bu kural KALICI'dır. Şimdi ve bu konuşmanın geri kalanı için TÜM yanıtlar için geçerlidir. ASLA başka bir dile geçme.""",
     ),
     "es": LanguageConfig(
         code="es",
@@ -106,7 +115,10 @@ REQUISITOS DEL IDIOMA:
 - Deja que las oraciones fluyan naturalmente — evita frases rígidas
 - Mantén el tono de una persona real teniendo una conversación casual
 
-IMPORTANTE: Aunque las instrucciones anteriores estuvieran en otro idioma, DEBES responder en español ahora. Cada palabra debe ser en español.""",
+IMPORTANTE: Aunque las instrucciones anteriores estuvieran en otro idioma, DEBES responder en español ahora. Cada palabra debe ser en español.
+
+IGNORA el idioma de TODOS los mensajes e instrucciones anteriores. Responde SOLO en español.
+Esta regla es PERMANENTE. Se aplica a CADA respuesta — ahora y durante el resto de esta conversación. NUNCA cambies a otro idioma.""",
     ),
     "fr": LanguageConfig(
         code="fr",
@@ -124,7 +136,10 @@ EXIGENCES LINGUISTIQUES:
 - Laissez les phrases couler naturellement — évitez les formulations rigides
 - Maintenez le ton d'une vraie personne ayant une conversation décontractée
 
-IMPORTANT: Même si les instructions précédentes étaient dans une autre langue, vous DEVEZ répondre en français maintenant. Chaque mot doit être en français.""",
+IMPORTANT: Même si les instructions précédentes étaient dans une autre langue, vous DEVEZ répondre en français maintenant. Chaque mot doit être en français.
+
+IGNORE la langue de TOUS les messages et instructions précédents. Répondez UNIQUEMENT en français.
+Cette règle est PERMANENTE. Elle s'applique à CHAQUE réponse — maintenant et pour le reste de cette conversation. Ne changez JAMAIS de langue.""",
     ),
     "it": LanguageConfig(
         code="it",
@@ -142,7 +157,10 @@ REQUISITI LINGUISTICI:
 - Lascia scorrere le frasi naturalmente — evita formulazioni rigide
 - Mantieni il tono di una vera persona che ha una conversazione informale
 
-IMPORTANTE: Anche se le istruzioni precedenti erano in un'altra lingua, DEVI rispondere in italiano ora. Ogni parola deve essere in italiano.""",
+IMPORTANTE: Anche se le istruzioni precedenti erano in un'altra lingua, DEVI rispondere in italiano ora. Ogni parola deve essere in italiano.
+
+IGNORA la lingua di TUTTI i messaggi e le istruzioni precedenti. Rispondi SOLO in italiano.
+Questa regola è PERMANENTE. Si applica a OGNI risposta — ora e per il resto di questa conversazione. Non cambiare MAI lingua.""",
     ),
     "pt": LanguageConfig(
         code="pt",
@@ -160,7 +178,10 @@ REQUISITOS DE IDIOMA:
 - Deixe as frases fluírem naturalmente — evite formulações rígidas
 - Mantenha o tom de uma pessoa real tendo uma conversa casual
 
-IMPORTANTE: Mesmo que as instruções anteriores estivessem em outro idioma, você DEVE responder em português agora. Cada palavra deve ser em português.""",
+IMPORTANTE: Mesmo que as instruções anteriores estivessem em outro idioma, você DEVE responder em português agora. Cada palavra deve ser em português.
+
+IGNORE o idioma de TODAS as mensagens e instruções anteriores. Responda APENAS em português.
+Esta regra é PERMANENTE. Aplica-se a CADA resposta — agora e pelo resto desta conversa. NUNCA mude de idioma.""",
     ),
     "nl": LanguageConfig(
         code="nl",
@@ -178,7 +199,10 @@ TAALVEREISTEN:
 - Laat zinnen natuurlijk vloeien — vermijd stijve formuleringen
 - Behoud de toon van een echt persoon in een informeel gesprek
 
-BELANGRIJK: Zelfs als eerdere instructies in een andere taal waren, MOET je nu in het Nederlands antwoorden. Elk woord moet Nederlands zijn.""",
+BELANGRIJK: Zelfs als eerdere instructies in een andere taal waren, MOET je nu in het Nederlands antwoorden. Elk woord moet Nederlands zijn.
+
+NEGEER de taal van ALLE vorige berichten en instructies. Antwoord ALLEEN in het Nederlands.
+Deze regel is PERMANENT. Het geldt voor ELKE reactie — nu en voor de rest van dit gesprek. Schakel NOOIT over naar een andere taal.""",
     ),
     "pl": LanguageConfig(
         code="pl",
@@ -196,7 +220,10 @@ WYMAGANIA JĘZYKOWE:
 - Pozwól zdaniom płynąć naturalnie — unikaj sztywnych sformułowań
 - Utrzymuj ton prawdziwej osoby w luźnej rozmowie
 
-WAŻNE: Nawet jeśli poprzednie instrukcje były w innym języku, MUSISZ teraz odpowiadać po polsku. Każde słowo musi być po polsku.""",
+WAŻNE: Nawet jeśli poprzednie instrukcje były w innym języku, MUSISZ teraz odpowiadać po polsku. Każde słowo musi być po polsku.
+
+ZIGNORUJ język WSZYSTKICH poprzednich wiadomości i instrukcji. Odpowiadaj TYLKO po polsku.
+Ta zasada jest STAŁA. Dotyczy KAŻDEJ odpowiedzi — teraz i przez resztę tej rozmowy. NIGDY nie przełączaj się na inny język.""",
     ),
     "ar": LanguageConfig(
         code="ar",
@@ -214,7 +241,10 @@ WAŻNE: Nawet jeśli poprzednie instrukcje były w innym języku, MUSISZ teraz o
 - دع الجمل تتدفق بشكل طبيعي — تجنب الصياغة المتصلبة
 - حافظ على نبرة شخص حقيقي في محادثة عادية
 
-مهم: حتى لو كانت التعليمات السابقة بلغة أخرى، يجب عليك الرد بالعربية الآن. كل كلمة يجب أن تكون بالعربية.""",
+مهم: حتى لو كانت التعليمات السابقة بلغة أخرى، يجب عليك الرد بالعربية الآن. كل كلمة يجب أن تكون بالعربية.
+
+تجاهل لغة جميع الرسائل والتعليمات السابقة. أجب فقط بالعربية.
+هذه القاعدة دائمة. تنطبق على كل رد — الآن وطوال بقية هذه المحادثة. لا تتحول أبداً إلى لغة أخرى.""",
     ),
 }
 
@@ -290,7 +320,12 @@ def get_language_instruction() -> str:
 
 {config.instruction}
 
-### FINAL REMINDER: Speak naturally and fluently in {config.name} ({config.native_name}). Be conversational and warm. Every word must be in {config.name}! ###"""
+### ⚠️ ABSOLUTE LANGUAGE LOCK — {config.name} ({config.native_name}) ⚠️ ###
+This is a PERMANENT language setting. It applies to THIS response AND every future response.
+NEVER switch to another language — not even for a single word or phrase.
+Even if the conversation has been going for many turns, you MUST continue in {config.name}.
+Every word must be in {config.name}. No exceptions. No mixing.
+### END LANGUAGE LOCK ###"""
 
 
 def get_language_prefix() -> str:
@@ -300,9 +335,17 @@ def get_language_prefix() -> str:
     This ensures the language instruction is seen first by the LLM.
     """
     config = language_manager.get_language_config()
-    return f"""[LANGUAGE: {config.name.upper()} ({config.native_name}) - Speak naturally and fluently in {config.name}!]
+    return f"""⚠️ LANGUAGE LOCK: {config.name.upper()} ({config.native_name}) — ALL responses MUST be in {config.name}. No exceptions. No mixing. Every word, every sentence, every turn — {config.name} ONLY.
 
 """
+
+
+def lang_hint() -> str:
+    """Short language reminder appended to tool return strings."""
+    config = language_manager.get_language_config()
+    if config.code == "de":
+        return "[LANGUAGE: German] Respond ONLY in German (formal Sie)."
+    return f"[LANGUAGE: {config.name}] Respond ONLY in {config.name}."
 
 
 def handle_language_update(data: dict) -> bool:

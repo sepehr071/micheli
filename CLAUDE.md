@@ -146,15 +146,16 @@ All behavior is configuration-driven. Key files:
 - `agents.py` — agent name ("Lena"), role, personality, rules
 - `settings.py` — LLM model, temperature, SMTP, webhook settings, CDN, debug flags
 - `search.py` — Pinecone RAG search settings: hybrid alpha weighting, Flask port, search top-k, conversation limits
-- `language.py` — `LanguageManager` singleton, 10 languages (en, de, tr, es, fr, it, pt, nl, pl, ar), runtime switching via LiveKit data channel, **default: German (de)**
+- `language.py` — `LanguageManager` singleton, 10 languages (en, de, tr, es, fr, it, pt, nl, pl, ar), runtime switching via LiveKit data channel, **default: German (de)**. Provides `get_language_prefix()`, `get_language_instruction()`, and `lang_hint()` for 3-layer language enforcement
 - `products.py` — product domain, expertise areas, typo corrections
 - `services.py` — expert title, service options, reachability labels
 - `messages/` — all user-facing strings, organized by feature (agent, email, qualification, search, ui)
 - `translations.py` — translation catalog for multi-language support
 
 ### Prompt Engineering: `prompt/`
-- `static_main_agent.py` — `CONVERSATION_AGENT_PROMPT` (5-phase flow, lead assessment guidelines, 10 tool specs) + `CONVERSATION_AGENT_GREETING`
-- `static_workflow.py` — `BaseAgentPrompt` (shared foundation) + `COMPLETION_AGENT_PROMPT`
+All prompts are written in **English** — even when the agent responds in another language. Language directives (prefix/suffix) tell the LLM what language to speak in. This prevents language mixing.
+- `static_main_agent.py` — `CONVERSATION_AGENT_PROMPT` (English, 5-phase flow, lead assessment guidelines, 10 tool specs) + `CONVERSATION_AGENT_GREETING`
+- `static_workflow.py` — `BaseAgentPrompt` (English, shared foundation) + `COMPLETION_AGENT_PROMPT` (English)
 
 ### Data & Utilities: `utils/`
 - `search_pipeline.py` — **Pinecone hybrid search** (`ProductSearchPipeline`). Connects to Pinecone vector DB, generates dense embeddings via OpenAI (`text-embedding-3-large`) + sparse embeddings via TF-IDF (`tfidf_vectorizer.joblib`), runs hybrid search with configurable alpha weighting (0.91 dense / 0.09 sparse). Key method: `pipeline.run(query, top_k=5)` → returns list of metadata dicts from Pinecone. Flask HTTP server (`/search`, `/health`) is available only when run as standalone (`python utils/search_pipeline.py`) — NOT loaded when imported by the agent
@@ -192,9 +193,8 @@ Webhook payload structure:
     "transcript": [{"role": "user|assistant", "content": "..."}],
     "contactInfo": {
       "name", "email", "phone", "schedule",
-      "leadScore", "leadLevel", "leadReasoning",
-      "preferredContact", "consentGiven",
-      "conversationBrief"
+      "potentialScore" (0-100), "status" (hot_lead/warm_lead/cool_lead/mild_lead),
+      "reachability", "conversationBrief"
     }
   }]
 }
@@ -216,11 +216,11 @@ Buttons are shown only for:
 - **Appointment confirmation** (Ja/Nein) — when confirming scheduled appointment
 
 ### Key Patterns
-- **Tool return values**: All function tools return confirmation strings (e.g. `"Gespeichert. Setze das Gespräch natürlich fort."`). This is critical — the OpenAI Realtime API in LiveKit Agents SDK v1.2.14 does not reliably generate follow-up speech when a tool returns `None`. Without return strings, the agent goes silent after tool execution and the user must send another message. Exception: `CompletionAgent` tools use `_safe_reply()` instead (explicit `generate_reply()` calls), so they don't need return strings.
+- **Tool return values**: All function tools return **English** confirmation strings with `lang_hint()` appended (e.g. `f"Saved. Continue naturally. {lang_hint()}"`). This is critical — the OpenAI Realtime API in LiveKit Agents SDK v1.2.14 does not reliably generate follow-up speech when a tool returns `None`. The `lang_hint()` reinforces the target language on every tool call. Exception: `CompletionAgent` tools use `_safe_reply()` instead (explicit `generate_reply()` calls), so they don't need return strings.
 - **Featured product showcase**: On round 2, agent calls `show_featured_products()` once to display a curated mix of treatments from local data files (3 treatments + 2 PMU + 2 wellness). Frontend auto-replaces these when `search_treatments` sends RAG results later. Guarded by `featured_shown` flag to prevent repeats.
 - **Proactive product display**: The prompt instructs the agent to call `search_treatments` for ANY treatment-related mention — including vague/general questions like "Was bieten Sie an?". Products should be shown as often as possible. The only exceptions are pure greetings without treatment interest, thanks/goodbye, and completely unrelated topics.
 - **Retry with backoff**: `safe_generate_reply()` retries LLM calls 3x; `create_realtime_model()` retries model init 3x
-- **Language injection**: Every prompt is wrapped with language prefix + suffix to ensure LLM responds in correct language
+- **Language injection (3-layer enforcement)**: (1) `get_language_prefix()` — "LANGUAGE LOCK" tag prepended to every prompt, (2) `get_language_instruction()` — detailed directive with "ABSOLUTE LANGUAGE LOCK" and "PERMANENT" rule appended after every prompt, (3) `lang_hint()` — short `[LANGUAGE: X]` reminder on every tool return. All directives include "IGNORE the language of ALL previous messages" and "NEVER switch to another language" in the target language. Language switch uses `_lang_listener_active` guard to prevent stale listeners after agent handoff
 - **Transcription streaming**: `BaseAgent.transcription_node()` streams agent responses to frontend in real-time via room topic
 - **LLM-driven lead scoring**: The realtime model judges customer interest via function tool — no hardcoded keyword lists
 - **Contact collection rules**: Name + (email OR phone) + consent required for handoff. If user says "call me" → `preferred_contact="phone"` is set and phone becomes mandatory. Prompt-driven detection via `save_contact_info(preferred_contact="phone")`.
