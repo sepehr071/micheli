@@ -175,6 +175,7 @@ class BaseAgent(Agent):
         """
         logger.info(f"Conversation summary (BaseAgent): {summary}")
         self.userdata.conversation_summary = summary.strip()
+        return "Zusammenfassung gespeichert."
 
     async def transcription_node(self, text: AsyncIterable[str], model_settings: ModelSettings) -> AsyncIterable[str]:
         agent_response = ""

@@ -38,8 +38,13 @@ LIVEKIT_URL=...              # Required - LiveKit server URL
 LIVEKIT_API_KEY=...          # Required - LiveKit API key
 LIVEKIT_API_SECRET=...       # Required - LiveKit API secret
 INGEST_API_KEY=...           # Required - Webhook authentication key
+PINECONE_API_KEY=...         # Required - Pinecone vector DB for treatment search
 LLM_MODEL=gpt-4o-mini       # Optional - default: gpt-4o-mini
 OPENROUTER_API_KEY=...       # Optional - for email summary generation via OpenRouter
+PINECONE_REGION=us-east-1   # Optional - Pinecone region
+INDEX_NAME=test              # Optional - Pinecone index name
+DIMENSION=3072               # Optional - embedding dimension
+EMBEDDING_MODEL=text-embedding-3-large  # Optional - OpenAI embedding model
 DEBUG=false                  # Optional - verbose logging
 ```
 
@@ -51,64 +56,120 @@ DEBUG=false                  # Optional - verbose logging
 - All agents use `openai.realtime.RealtimeModel` — this is a speech-to-speech model, not a standard chat LLM
 
 ### Entry Point: `agent.py`
-- Creates `AgentSession[UserData]`, starts `BeautyLoungeAssistant` as initial agent
+- Creates `AgentSession[UserData]`, starts `ConversationAgent` as initial agent
 - Registers shutdown callback: saves local history + sends async webhook
 - Safety net: extracts email from transcript via regex on disconnect (in case agent hadn't stored it yet)
 - Hooks `user_input_transcribed` event for real-time translation
 
-### Agent Chain (Handoff Pattern)
-Agents hand off control sequentially via `session.update_agent()`:
+### 2-Agent Architecture
+
+The system uses **2 agents** with a single handoff point:
 
 ```
-BeautyLoungeAssistant (main conversation + treatment search)
-  → PurchaseTimingAgent (Q1: when buying?)
-    → NextStepAgent (Q2: what next step?)
-      → ReachabilityAgent (Q3: how to reach?)
-        → GetUserNameAgent
-          → GetUserEmailPhoneAgent
-            → ScheduleCallAgent
-              → SendEmailAgent
-                → SummaryAgent
-                  → LastAgent (restart or end)
+ConversationAgent (greeting, consultation, lead qualification, contact collection)
+  → CompletionAgent (email sending, summary, restart)
 ```
 
-- `BeautyLoungeAssistant` (`agents/main_agent.py`) — extends `Agent` directly, has `@function_tool` methods for product retrieval, conversation summary, and expert connection
-- All sub-agents (`agents/qualification_agents.py`, `agents/contact_agents.py`, `agents/email_agents.py`) — extend `BaseAgent` (`agents/base.py`) which wraps `Agent` with retry logic, language injection, and frontend transcription streaming
+#### `ConversationAgent` (`agents/main_agent.py`)
+The main brain. Extends `Agent` directly. Handles the full conversation lifecycle through 5 natural phases:
+
+1. **Round 1 — Greeting**: Warm welcome, ask about treatment needs
+2. **Round 2-3 — Consult + Soft Lead**: Answer questions + naturally try to get name/contact at end of response
+3. **Ongoing — Build Lead**: Continue consulting, weave in contact collection, offer expert connection when ready
+4. **After contact info — Consent**: Ask explicit GDPR consent to be contacted
+5. **Wrap-up**: Confirm everything, hand off to CompletionAgent
+
+**9 function tools:**
+
+| Tool | Purpose |
+|------|---------|
+| `search_treatments(query, category, mentioned_treatments[])` | Semantic search via Pinecone RAG, send to frontend via `"products"` topic |
+| `assess_lead_interest(score, level, reasoning)` | LLM stores its own lead assessment (0-10 score) — replaces keyword matching |
+| `offer_expert_connection()` | Send Yes/No buttons via `"trigger"` topic |
+| `handle_expert_response(accepted)` | Record customer's Yes/No response |
+| `save_contact_info(name?, email?, phone?, preferred_contact?)` | Incremental contact collection — all params optional |
+| `record_consent(consent)` | GDPR consent to be contacted |
+| `schedule_appointment(date, time)` | Save preferred appointment |
+| `save_conversation_summary(summary)` | Agent-written conversation brief |
+| `complete_contact_collection()` | Validate min info (name + email/phone + consent), handoff → CompletionAgent |
+
+#### `CompletionAgent` (`agents/email_agents.py`)
+Transactional agent. Extends `BaseAgent`. Handles post-conversation tasks.
+
+**3 function tools:**
+
+| Tool | Purpose |
+|------|---------|
+| `send_appointment_emails(confirm)` | Send customer confirmation + lead notification to company |
+| `send_summary_email(email?)` | Send conversation summary email |
+| `start_new_conversation()` | Save history, send webhook, reset, restart |
+
+#### `BaseAgent` (`agents/base.py`)
+Shared foundation for sub-agents. Provides:
+- `safe_generate_reply()` — retry wrapper for LLM calls (3x with backoff)
+- `create_realtime_model()` — retry wrapper for model init (3x)
+- Language injection — wraps prompts with language prefix/suffix
+- `transcription_node()` — streams agent responses to frontend via `"message"` topic
+- Data listener for language changes from frontend
+- `save_conversation_summary()` function tool
 
 ### Session State: `core/session_state.py`
-- `UserData` dataclass — shared across all agents via `AgentSession[UserData].userdata`
-- Holds: contact info, search results, signal levels, qualification responses, conversation summary, flow control flags
-- `conversation_summary` — written by the realtime model via `save_conversation_summary()` function tool (no separate LLM call)
-- In-memory only; saved to file + webhook on shutdown
+`UserData` dataclass — shared across agents via `AgentSession[UserData].userdata`:
+
+```python
+# Contact
+name, email, phone, preferred_contact
+
+# Appointment
+schedule_date, schedule_time
+
+# Lead (LLM-driven)
+lead_score (0-10), lead_level (HOT/WARM/COOL/MILD), lead_reasoning
+
+# Search
+search_count, last_search_results
+
+# Flow
+expert_offered, expert_accepted, consent_given
+
+# Conversation
+conversation_summary, _history_saved
+```
+
+### Lead Scoring
+Lead scoring is **LLM-driven** — the realtime model itself rates customer interest via `assess_lead_interest()` function tool. No hardcoded keyword lists. The LLM provides a 0-10 score, level, and reasoning based on the full conversation context. This works across all 10 languages without maintaining separate keyword lists.
 
 ### Configuration Layer: `config/`
 All behavior is configuration-driven. Key files:
 - `company.py` — **central company identity**: name, contact, address, social, mission (edit this to deploy for a new company)
 - `agents.py` — agent name ("Lena"), role, personality, rules
 - `settings.py` — LLM model, temperature, SMTP, webhook settings, CDN, debug flags
+- `search.py` — Pinecone RAG search settings: hybrid alpha weighting, Flask port, search top-k, conversation limits
 - `language.py` — `LanguageManager` singleton, 10 languages (en, de, tr, es, fr, it, pt, nl, pl, ar), runtime switching via LiveKit data channel
-- `signals.py` — buying signal keywords (HOT/WARM/COOL) and lead scoring weights
 - `products.py` — product domain, expertise areas, typo corrections
+- `services.py` — expert title, service options, reachability labels
 - `messages/` — all user-facing strings, organized by feature (agent, email, qualification, search, ui)
 - `translations.py` — translation catalog for multi-language support
 
 ### Prompt Engineering: `prompt/`
-- `static_main_agent.py` — main agent system prompt and greeting
-- `static_workflow.py` — sub-agent workflow prompts
-- `static_extraction.py` — data extraction prompts (contact info, filters)
-- `dynamic_prompts.py` — runtime prompt generation based on context and language
-
-### Business Logic: `core/`
-- `lead_scoring.py` — detects buying signals (HOT/WARM/COOL/MILD) from user messages, calculates lead degree score (0-10)
-- `response_builder.py` — assembles signal-aware LLM instructions, tracks response budget
+- `static_main_agent.py` — `CONVERSATION_AGENT_PROMPT` (5-phase flow, lead assessment guidelines, 9 tool specs) + `CONVERSATION_AGENT_GREETING`
+- `static_workflow.py` — `BaseAgentPrompt` (shared foundation) + `COMPLETION_AGENT_PROMPT`
 
 ### Data & Utilities: `utils/`
-- `data_loader.py` — loads product data from **local files** (singleton `DataLoader`), NOT from Pinecone/RAG despite README claims
+- `search_pipeline.py` — **Pinecone hybrid search** (`ProductSearchPipeline`). Connects to Pinecone vector DB, generates dense embeddings via OpenAI (`text-embedding-3-large`) + sparse embeddings via TF-IDF (`tfidf_vectorizer.joblib`), runs hybrid search with configurable alpha weighting (0.91 dense / 0.09 sparse). Key method: `pipeline.run(query, top_k=5)` → returns list of metadata dicts from Pinecone. Flask HTTP server (`/search`, `/health`) is available only when run as standalone (`python utils/search_pipeline.py`) — NOT loaded when imported by the agent
+- `data_loader.py` — loads product data from **local files** (singleton `DataLoader`). Used for static prompt context (general info, FAQ). Local data files remain as reference but search is handled by Pinecone
 - `webhook.py` — **async webhook** (`httpx.AsyncClient`) sends session data to `https://ayand-log.vercel.app/api/webhooks/ingest`. 3 retries, 5s timeout. Uses `COMPANY["name"]` from `config/company.py`
-- `history.py` — saves conversations to `.txt` files in `history/` directory. `normalize_messages()` converts ChatMessage objects to `{role, message}` dicts (used by both history and webhook)
-- `message_classifier.py` — classifies user intent into `MessageCategory` enum (search, greeting, buying_signal, off_topic, etc.)
-- `filter_extraction.py` / `filter_state.py` — extracts and tracks user preference filters
+- `history.py` — saves conversations to `.txt` files in `history/` directory. `normalize_messages()` converts ChatMessage objects to `{role, message}` dicts
+- `helpers.py` — email validation (`is_valid_email_syntax`) and time-based greeting (`get_greeting`)
 - `smtp.py` — sends emails via Gmail SMTP (customer confirmation, lead notification, summary)
+
+### Search Architecture: Pinecone RAG
+Treatment search uses **Pinecone vector database** with hybrid (dense + sparse) search:
+1. `ConversationAgent` initializes `ProductSearchPipeline` in `__init__()`
+2. `search_treatments` tool calls `pipeline.run(query, top_k=5)` via `asyncio.to_thread()` (blocking call wrapped for async)
+3. Pinecone returns metadata dicts with treatment info (`name`, `Introduction`, `Features`, `Benefits to Clients`, `url`, `image_link`)
+4. Results are formatted for both LLM context and frontend display
+5. Frontend receives product cards via `"products"` topic with `image_link` from Pinecone metadata
 
 ### Webhook & Conversation Persistence
 On session end (user disconnect or normal completion):
@@ -130,8 +191,9 @@ Webhook payload structure:
     "transcript": [{"role": "user|assistant", "content": "..."}],
     "contactInfo": {
       "name", "email", "phone", "schedule",
-      "purchaseTiming", "potentialScore", "nextStep",
-      "reachability", "conversationBrief"
+      "leadScore", "leadLevel", "leadReasoning",
+      "preferredContact", "consentGiven",
+      "conversationBrief"
     }
   }]
 }
@@ -144,15 +206,23 @@ Agent communicates with the web frontend via **LiveKit Room Topics** (JSON paylo
 |-------|-----------|---------|
 | `"message"` | Agent → Frontend | `{"agent_response": "text"}` |
 | `"products"` | Agent → Frontend | `[{product details}]` |
-| `"trigger"` | Agent → Frontend | `{"Yes": "Yes", "No": "No"}` (buttons) |
+| `"trigger"` | Agent → Frontend | `{"Ja": "Ja", "Nein": "Nein"}` (buttons) |
 | `"language"` | Frontend → Agent | `{"language": "de"}` |
 | `"clean"` | Agent → Frontend | `{"clean": true}` (reset UI) |
 
+Buttons are shown only for:
+- **Expert offer** (Ja/Nein) — when offering to connect with Patrizia
+- **Appointment confirmation** (Ja/Nein) — when confirming scheduled appointment
+
 ### Key Patterns
+- **Tool return values**: All function tools return confirmation strings (e.g. `"Gespeichert. Setze das Gespräch natürlich fort."`). This is critical — the OpenAI Realtime API in LiveKit Agents SDK v1.2.14 does not reliably generate follow-up speech when a tool returns `None`. Without return strings, the agent goes silent after tool execution and the user must send another message. Exception: `CompletionAgent` tools use `_safe_reply()` instead (explicit `generate_reply()` calls), so they don't need return strings.
+- **Proactive product display**: The prompt instructs the agent to call `search_treatments` for ANY treatment-related mention — including vague/general questions like "Was bieten Sie an?". Products should be shown as often as possible. The only exceptions are pure greetings without treatment interest, thanks/goodbye, and completely unrelated topics.
 - **Retry with backoff**: `safe_generate_reply()` retries LLM calls 3x; `create_realtime_model()` retries model init 3x
 - **Language injection**: Every prompt is wrapped with language prefix + suffix to ensure LLM responds in correct language
 - **Transcription streaming**: `BaseAgent.transcription_node()` streams agent responses to frontend in real-time via room topic
-- **Signal-driven flow**: Buying signal level determines when to offer expert connection (requires 2+ searches + HOT/WARM signal)
+- **LLM-driven lead scoring**: The realtime model judges customer interest via function tool — no hardcoded keyword lists
+- **Proactive lead capture**: From round 2-3, agent answers the question AND naturally asks for name/contact at the end
+- **GDPR consent**: Agent must ask for explicit consent before contact info can be used
 - **Agent-written summary**: `save_conversation_summary()` function tool lets the realtime model write conversation briefs during the conversation (no separate LLM call needed)
 - **Safety net on disconnect**: Regex extracts email from transcript if user disconnects before agent stores it
 

@@ -28,7 +28,7 @@ from config.language import (
 from prompt.static_main_agent import CONVERSATION_AGENT_PROMPT, CONVERSATION_AGENT_GREETING
 from utils.helpers import get_greeting, is_valid_email_syntax
 from utils.history import normalize_messages
-from utils.data_loader import data_loader
+from utils.search_pipeline import ProductSearchPipeline
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +63,7 @@ class ConversationAgent(Agent):
             self.userdata = userdata
         self.first_message = first_message
         self.room = room
+        self.search_pipeline = ProductSearchPipeline()
         self._original_instructions = CONVERSATION_AGENT_PROMPT
 
         # Register data received callback for language updates
@@ -169,97 +170,31 @@ class ConversationAgent(Agent):
         return await safe_generate_reply(self.session, self.room, instructions)
 
     # ══════════════════════════════════════════════════════════════════════════
-    # TREATMENT DATA RETRIEVAL — local data files
+    # TREATMENT DATA RETRIEVAL — Pinecone vector search
     # ══════════════════════════════════════════════════════════════════════════
 
-    def _get_relevant_data(self, categories: List[str]) -> Dict[str, Any]:
-        """
-        Get relevant data based on classified categories.
-        Returns a dictionary with data for each requested category.
-        """
-        result: Dict[str, Any] = {
-            "products": [],
-            "use_cases": [],
-        }
-
-        if "all" in categories:
-            result["products"] = data_loader.load_treatments() + data_loader.load_permanent_makeup()
-            result["use_cases"] = data_loader.load_wellness()
-            return result
-
-        if "treatments" in categories:
-            result["products"].extend(data_loader.load_treatments())
-
-        if "permanent_makeup" in categories:
-            result["products"].extend(data_loader.load_permanent_makeup())
-
-        if "wellness" in categories:
-            result["use_cases"] = data_loader.load_wellness()
-
-        # Fallback: return treatments if nothing matched
-        if not result["products"] and not result["use_cases"]:
-            result["products"] = data_loader.load_treatments()
-
-        return result
-
-    def _format_products_for_llm(
-        self, products: List[Dict[str, Any]], max_products: int = 5
-    ) -> str:
-        """Format treatment data for LLM context — uses LLM context files."""
-        if not products:
+    def _format_pinecone_results_for_llm(self, results: List[Dict[str, Any]], max_results: int = 5) -> str:
+        """Format Pinecone search results for LLM context."""
+        if not results:
             return "Keine passenden Behandlungen gefunden."
 
         formatted = []
-        for product in products[:max_products]:
-            name = product.get("name", "Unbekannte Behandlung")
-            url = product.get("url", "")
-
+        for item in results[:max_results]:
+            name = item.get("name", "Unbekannte Behandlung")
             desc_parts = [f"**{name}**"]
 
-            if "Introduction" in product:
-                desc_parts.append(f"Beschreibung: {product['Introduction']}")
-            if "Features" in product:
-                desc_parts.append(f"Details: {product['Features']}")
-            if "Benefits to Clients" in product:
-                desc_parts.append(f"Vorteile: {product['Benefits to Clients']}")
-            if "duration_min" in product:
-                desc_parts.append(f"Dauer: {product['duration_min']} Min.")
-            if "treatment_category" in product:
-                desc_parts.append(f"Kategorie: {product['treatment_category']}")
-            if "skin_type" in product:
-                desc_parts.append(f"Hauttyp: {product['skin_type']}")
-            if "method" in product:
-                desc_parts.append(f"Methode: {product['method']}")
-            if url:
-                desc_parts.append(f"URL: {url}")
+            if "Introduction" in item:
+                desc_parts.append(f"Beschreibung: {item['Introduction']}")
+            if "Features" in item:
+                desc_parts.append(f"Details: {item['Features']}")
+            if "Benefits to Clients" in item:
+                desc_parts.append(f"Vorteile: {item['Benefits to Clients']}")
+            if "url" in item:
+                desc_parts.append(f"URL: {item['url']}")
 
             formatted.append("\n".join(desc_parts))
 
         return "\n\n---\n\n".join(formatted)
-
-    def _format_use_cases_for_llm(
-        self, use_cases: List[Dict[str, Any]], max_cases: int = 3
-    ) -> str:
-        """Format wellness data for LLM context."""
-        if not use_cases:
-            return ""
-
-        formatted = []
-        for case in use_cases[:max_cases]:
-            title = case.get("title", case.get("name", "Unbekannt"))
-            summary = case.get("summary", case.get("Introduction", ""))
-
-            case_parts = [f"**{title}**"]
-            if summary:
-                case_parts.append(f"Beschreibung: {summary}")
-
-            formatted.append("\n".join(case_parts))
-
-        return "\n\n---\n\n".join(formatted)
-
-    def _get_llm_context(self, category: str) -> str:
-        """Get LLM-optimized context for a category from pre-built markdown files."""
-        return data_loader.get_llm_context_by_category(category)
 
     # ══════════════════════════════════════════════════════════════════════════
     # FUNCTION TOOL 1 — SEARCH TREATMENTS
@@ -332,7 +267,7 @@ class ConversationAgent(Agent):
         category: str = "treatments",
         mentioned_treatments: list[str] = None,
     ) -> str:
-        """Core search logic — loads data, sends to frontend, returns LLM context."""
+        """Core search logic — queries Pinecone, sends to frontend, returns LLM context."""
         if mentioned_treatments is None:
             mentioned_treatments = []
 
@@ -357,30 +292,30 @@ class ConversationAgent(Agent):
         ]
         last_user_msg = user_messages[-1] if user_messages else ""
 
-        # Get treatments from the selected category (for frontend display)
-        frontend_products = data_loader.get_products_by_category(
-            category=category,
-            query=last_user_msg,
-            mentioned_products=mentioned_treatments,
-            min_results=5,
-        )
+        # Query Pinecone for semantic search results
+        try:
+            search_results = await asyncio.to_thread(
+                self.search_pipeline.run,
+                query=last_user_msg,
+                top_k=5,
+            )
+        except Exception as e:
+            logger.error(f"Pinecone search failed: {e}")
+            search_results = []
 
-        # Get LLM-optimized context from pre-built markdown files
-        if category == "wellness":
-            products_text = ""
-            use_cases_text = self._get_llm_context("wellness")
-        else:
-            products_text = self._get_llm_context(category)
-            use_cases_text = ""
+        # Format for LLM context
+        products_text = self._format_pinecone_results_for_llm(search_results)
 
         # Send treatments to frontend via "products" topic
         try:
             frontend_payload = []
-            for item in frontend_products[:5]:
-                frontend_item = data_loader.get_frontend_product(item)
-                if "duration_min" in item:
-                    frontend_item["duration"] = item["duration_min"]
-                frontend_payload.append(frontend_item)
+            for item in search_results[:5]:
+                frontend_payload.append({
+                    "product_name": item.get("name", "Unknown"),
+                    "url": item.get("url", ""),
+                    "category": category,
+                    "image": [item.get("image_link", "")] if item.get("image_link") else [],
+                })
 
             logger.info(
                 f"Frontend treatments (category={category}): "
@@ -397,6 +332,9 @@ class ConversationAgent(Agent):
         except Exception as e:
             logger.error(f"Failed to send treatments to frontend: {e}")
 
+        # Store results in userdata
+        self.userdata.last_search_results = search_results[:5]
+
         # Build LLM context
         context_parts = [
             f"USER QUERY: {last_user_msg}",
@@ -407,16 +345,6 @@ class ConversationAgent(Agent):
             f"Also explain shortly about these treatments and their relation with user query: "
             f"{[p['product_name'] for p in frontend_payload]}",
         ]
-
-        if use_cases_text:
-            context_parts.extend([
-                "",
-                "=== RELEVANT WELLNESS DATA ===",
-                use_cases_text,
-            ])
-
-        # Store results in userdata
-        self.userdata.last_search_results = frontend_products[:5]
 
         # Append conversation rules
         context_parts.extend(["", "=== CONVERSATION RULES ===", CONVERSATION_RULES])
@@ -450,6 +378,7 @@ class ConversationAgent(Agent):
         )
         self.userdata.lead_reasoning = reasoning.strip()
         logger.info(f"Lead assessed: score={score}, level={level}, reason={reasoning}")
+        return "Lead-Bewertung gespeichert. Setze das Gespräch fort."
 
     # ══════════════════════════════════════════════════════════════════════════
     # FUNCTION TOOL 3 — OFFER EXPERT CONNECTION
@@ -473,6 +402,7 @@ class ConversationAgent(Agent):
         except Exception as e:
             logger.error(f"Failed to send expert buttons: {e}")
         logger.info("Expert connection offered to customer")
+        return "Buttons gesendet. Warte auf die Antwort der Kundin."
 
     # ══════════════════════════════════════════════════════════════════════════
     # FUNCTION TOOL 4 — HANDLE EXPERT RESPONSE
@@ -493,6 +423,8 @@ class ConversationAgent(Agent):
                 "Kein Problem! Ich helfe Ihnen gerne weiter mit Ihren Fragen "
                 "zu unseren Behandlungen."
             )
+            return "Kundin hat abgelehnt. Antwort wurde generiert."
+        return "Kundin hat zugestimmt. Sammle jetzt die Kontaktdaten."
 
     # ══════════════════════════════════════════════════════════════════════════
     # FUNCTION TOOL 5 — SAVE CONTACT INFO
@@ -532,6 +464,7 @@ class ConversationAgent(Agent):
         if preferred_contact and preferred_contact in ("phone", "whatsapp", "email"):
             self.userdata.preferred_contact = preferred_contact
             logger.info(f"Saved preferred contact: {preferred_contact}")
+        return "Gespeichert. Setze das Gespräch natürlich fort."
 
     # ══════════════════════════════════════════════════════════════════════════
     # FUNCTION TOOL 6 — RECORD CONSENT
@@ -548,6 +481,7 @@ class ConversationAgent(Agent):
         """
         self.userdata.consent_given = consent
         logger.info(f"Consent recorded: {consent}")
+        return "Einwilligung gespeichert. Setze das Gespräch fort."
 
     # ══════════════════════════════════════════════════════════════════════════
     # FUNCTION TOOL 7 — SCHEDULE APPOINTMENT
@@ -567,6 +501,7 @@ class ConversationAgent(Agent):
         self.userdata.schedule_date = date.strip()
         self.userdata.schedule_time = time.strip()
         logger.info(f"Appointment scheduled: {date} at {time}")
+        return "Termin gespeichert. Bestätige der Kundin den Termin."
 
     # ══════════════════════════════════════════════════════════════════════════
     # FUNCTION TOOL 8 — SAVE CONVERSATION SUMMARY
@@ -582,6 +517,7 @@ class ConversationAgent(Agent):
         """
         logger.info(f"Conversation summary: {summary}")
         self.userdata.conversation_summary = summary.strip()
+        return "Zusammenfassung gespeichert."
 
     # ══════════════════════════════════════════════════════════════════════════
     # FUNCTION TOOL 9 — COMPLETE CONTACT COLLECTION
