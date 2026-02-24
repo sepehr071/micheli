@@ -139,25 +139,30 @@ class BaseAgent(Agent):
     async def _update_agent_instructions(self) -> None:
         """Update the agent's instructions with current language setting."""
         try:
-            # Preserve the current chat context before updating
-            current_chat_ctx = self._chat_ctx
-
             instructions = self._original_instructions
             if self._add_instruction:
                 instructions = prompts.BaseAgentPrompt.format(user_info=str(self.userdata)) + "\n" + instructions
-            # Update with fresh language instruction
             new_instructions = get_language_prefix() + instructions + get_language_instruction()
 
-            # Update instructions while preserving chat context
             self._instructions = new_instructions
             if hasattr(self, '_activity') and self._activity:
                 await self._activity.update_instructions(new_instructions)
 
-            # Ensure chat context is restored
-            if current_chat_ctx:
-                self._chat_ctx = current_chat_ctx
+            # Update transcription language hint
+            new_lang = language_manager.get_language()
+            if hasattr(self, "session") and self.session and self.session.llm:
+                try:
+                    from livekit.plugins.openai import AudioTranscription
+                    self.session.llm.update_options(
+                        input_audio_transcription=AudioTranscription(
+                            model="gpt-4o-mini-transcribe",
+                            language=new_lang,
+                        ),
+                    )
+                except Exception as e:
+                    logger.debug(f"Could not update transcription language: {e}")
 
-            logger.info(f"Agent instructions updated for language: {language_manager.get_language()}")
+            logger.info(f"Agent instructions updated for language: {new_lang}")
         except Exception as e:
             logger.error(f"Failed to update agent instructions: {e}")
 
