@@ -26,5 +26,6 @@ pytz==2025.2
 requests==2.32.5
 httpx
 pinecone
+scikit-learn
 joblib
 flask

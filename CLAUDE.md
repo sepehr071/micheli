@@ -79,11 +79,12 @@ The main brain. Extends `Agent` directly. Handles the full conversation lifecycl
 4. **After contact info — Consent**: Ask explicit GDPR consent to be contacted
 5. **Wrap-up**: Confirm everything, hand off to CompletionAgent
 
-**9 function tools:**
+**10 function tools:**
 
 | Tool | Purpose |
 |------|---------|
 | `search_treatments(query, category, mentioned_treatments[])` | Semantic search via Pinecone RAG, send to frontend via `"products"` topic |
+| `show_featured_products()` | Show curated product showcase from local data (once only, round 2) |
 | `assess_lead_interest(score, level, reasoning)` | LLM stores its own lead assessment (0-10 score) — replaces keyword matching |
 | `offer_expert_connection()` | Send Yes/No buttons via `"trigger"` topic |
 | `handle_expert_response(accepted)` | Record customer's Yes/No response |
@@ -91,7 +92,7 @@ The main brain. Extends `Agent` directly. Handles the full conversation lifecycl
 | `record_consent(consent)` | GDPR consent to be contacted |
 | `schedule_appointment(date, time)` | Save preferred appointment |
 | `save_conversation_summary(summary)` | Agent-written conversation brief |
-| `complete_contact_collection()` | Validate min info (name + email/phone + consent), handoff → CompletionAgent |
+| `complete_contact_collection()` | Validate min info (name + email/phone + consent, + phone if "call me"), handoff → CompletionAgent |
 
 #### `CompletionAgent` (`agents/email_agents.py`)
 Transactional agent. Extends `BaseAgent`. Handles post-conversation tasks.
@@ -130,7 +131,7 @@ lead_score (0-10), lead_level (HOT/WARM/COOL/MILD), lead_reasoning
 search_count, last_search_results
 
 # Flow
-expert_offered, expert_accepted, consent_given
+expert_offered, expert_accepted, consent_given, featured_shown
 
 # Conversation
 conversation_summary, _history_saved
@@ -145,14 +146,14 @@ All behavior is configuration-driven. Key files:
 - `agents.py` — agent name ("Lena"), role, personality, rules
 - `settings.py` — LLM model, temperature, SMTP, webhook settings, CDN, debug flags
 - `search.py` — Pinecone RAG search settings: hybrid alpha weighting, Flask port, search top-k, conversation limits
-- `language.py` — `LanguageManager` singleton, 10 languages (en, de, tr, es, fr, it, pt, nl, pl, ar), runtime switching via LiveKit data channel
+- `language.py` — `LanguageManager` singleton, 10 languages (en, de, tr, es, fr, it, pt, nl, pl, ar), runtime switching via LiveKit data channel, **default: German (de)**
 - `products.py` — product domain, expertise areas, typo corrections
 - `services.py` — expert title, service options, reachability labels
 - `messages/` — all user-facing strings, organized by feature (agent, email, qualification, search, ui)
 - `translations.py` — translation catalog for multi-language support
 
 ### Prompt Engineering: `prompt/`
-- `static_main_agent.py` — `CONVERSATION_AGENT_PROMPT` (5-phase flow, lead assessment guidelines, 9 tool specs) + `CONVERSATION_AGENT_GREETING`
+- `static_main_agent.py` — `CONVERSATION_AGENT_PROMPT` (5-phase flow, lead assessment guidelines, 10 tool specs) + `CONVERSATION_AGENT_GREETING`
 - `static_workflow.py` — `BaseAgentPrompt` (shared foundation) + `COMPLETION_AGENT_PROMPT`
 
 ### Data & Utilities: `utils/`
@@ -216,11 +217,13 @@ Buttons are shown only for:
 
 ### Key Patterns
 - **Tool return values**: All function tools return confirmation strings (e.g. `"Gespeichert. Setze das Gespräch natürlich fort."`). This is critical — the OpenAI Realtime API in LiveKit Agents SDK v1.2.14 does not reliably generate follow-up speech when a tool returns `None`. Without return strings, the agent goes silent after tool execution and the user must send another message. Exception: `CompletionAgent` tools use `_safe_reply()` instead (explicit `generate_reply()` calls), so they don't need return strings.
+- **Featured product showcase**: On round 2, agent calls `show_featured_products()` once to display a curated mix of treatments from local data files (3 treatments + 2 PMU + 2 wellness). Frontend auto-replaces these when `search_treatments` sends RAG results later. Guarded by `featured_shown` flag to prevent repeats.
 - **Proactive product display**: The prompt instructs the agent to call `search_treatments` for ANY treatment-related mention — including vague/general questions like "Was bieten Sie an?". Products should be shown as often as possible. The only exceptions are pure greetings without treatment interest, thanks/goodbye, and completely unrelated topics.
 - **Retry with backoff**: `safe_generate_reply()` retries LLM calls 3x; `create_realtime_model()` retries model init 3x
 - **Language injection**: Every prompt is wrapped with language prefix + suffix to ensure LLM responds in correct language
 - **Transcription streaming**: `BaseAgent.transcription_node()` streams agent responses to frontend in real-time via room topic
 - **LLM-driven lead scoring**: The realtime model judges customer interest via function tool — no hardcoded keyword lists
+- **Contact collection rules**: Name + (email OR phone) + consent required for handoff. If user says "call me" → `preferred_contact="phone"` is set and phone becomes mandatory. Prompt-driven detection via `save_contact_info(preferred_contact="phone")`.
 - **Proactive lead capture**: From round 2-3, agent answers the question AND naturally asks for name/contact at the end
 - **GDPR consent**: Agent must ask for explicit consent before contact info can be used
 - **Agent-written summary**: `save_conversation_summary()` function tool lets the realtime model write conversation briefs during the conversation (no separate LLM call needed)

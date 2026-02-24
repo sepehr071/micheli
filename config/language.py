@@ -275,7 +275,7 @@ class LanguageManager:
 
 
 # Global language manager instance
-language_manager = LanguageManager(default_language="en")
+language_manager = LanguageManager(default_language="de")
 
 
 def get_language_instruction() -> str:

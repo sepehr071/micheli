@@ -529,13 +529,15 @@ class ConversationAgent(Agent):
         Call this when you have collected sufficient contact information and consent.
         This validates the data and hands off to the completion agent for email sending.
 
-        Requirements: name + (email or phone) + consent_given = True
+        Requirements: name + (email or phone) + consent_given = True (+ phone if callback requested)
         """
         missing = []
         if not self.userdata.name:
             missing.append("Name")
         if not self.userdata.email and not self.userdata.phone:
             missing.append("E-Mail oder Telefon")
+        if self.userdata.preferred_contact == "phone" and not self.userdata.phone:
+            missing.append("Telefonnummer (Rueckruf gewuenscht)")
         if not self.userdata.consent_given:
             missing.append("Einwilligung zur Kontaktaufnahme")
 
@@ -556,6 +558,51 @@ class ConversationAgent(Agent):
             room=self.room,
             userdata=self.userdata,
         )
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # FUNCTION TOOL 10 — SHOW FEATURED PRODUCTS
+    # ══════════════════════════════════════════════════════════════════════════
+
+    @function_tool
+    async def show_featured_products(self, context: RunContext_T):
+        """
+        Show a selection of featured treatments and services to the customer.
+        Call this ONCE in your first response after the greeting to give the customer
+        a visual overview. Do NOT call this again — it only works once.
+        """
+        if self.userdata.featured_shown:
+            return "Bereits angezeigt. Nicht erneut aufrufen."
+
+        self.userdata.featured_shown = True
+
+        try:
+            from utils.data_loader import DataLoader
+            loader = DataLoader()
+            showcase = []
+            for category, items in [
+                ("treatments", loader.load_treatments()[:3]),
+                ("permanent_makeup", loader.load_permanent_makeup()[:2]),
+                ("wellness", loader.load_wellness()[:2]),
+            ]:
+                for item in items:
+                    showcase.append({
+                        "product_name": item.get("name", "Unknown"),
+                        "url": item.get("url", ""),
+                        "category": category,
+                        "image": [item.get("image", "")] if item.get("image") else [],
+                    })
+
+            if showcase:
+                asyncio.create_task(
+                    self.room.local_participant.send_text(
+                        json.dumps(showcase), topic="products"
+                    )
+                )
+                logger.info(f"Featured products sent: {[p['product_name'] for p in showcase]}")
+        except Exception as e:
+            logger.error(f"Failed to send featured products: {e}")
+
+        return "Produkte werden angezeigt. Erwaehne kurz, dass die Kundin einige unserer Behandlungen sehen kann."
 
     # ══════════════════════════════════════════════════════════════════════════
     # TRANSCRIPTION — streams text to frontend via "message" topic

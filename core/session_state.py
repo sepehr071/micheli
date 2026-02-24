@@ -36,6 +36,7 @@ class UserData:
     expert_offered: bool = False
     expert_accepted: bool = False
     consent_given: bool = False      # GDPR: explicit consent to be contacted
+    featured_shown: bool = False     # True after show_featured_products() called once
 
     # Conversation
     conversation_summary: Optional[str] = None  # Agent-written summary via function tool
