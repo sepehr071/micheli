@@ -3,4 +3,3 @@ history/
 pipeline.log
 *__pycache__*
 .env
-.claude/

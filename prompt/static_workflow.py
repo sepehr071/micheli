@@ -1,11 +1,11 @@
 """
-Sub-agent prompts for the qualification and scheduling flow.
+Sub-agent prompts for the completion and scheduling flow.
 
 STATIC: Template structure, tool specs, instruction format, guardrails.
 CONFIGURABLE (via config/): company name, language, formality, agent personality,
-    expert title, purchase timing options, service options, reachability options.
+    expert title, service options.
 
-Used by: agent.py (as `import prompt.static_workflow as prompts`)
+Used by: agents/ (as `import prompt.static_workflow as prompts`)
 """
 
 from config.company import COMPANY
@@ -24,30 +24,6 @@ _expertise_str = (
 _base_rules = "\n".join(BASE_AGENT["rules"])
 _expert = SERVICES.get("expert_title", "consultant")
 _off_topic_text = SERVICES.get("off_topic_redirect", "That's not my area, but I can help with {domain}!").format(domain=PRODUCTS["domain"])
-
-# Formatted option strings for tool specs
-_purchase_timing = SERVICES.get("purchase_timing", {
-    "immediately": "Right away or in the next few days",
-    "2_4_weeks": "In 2 to 4 weeks",
-    "later": "More like in a few months",
-})
-_service_options = SERVICES.get("service_options", {
-    "demo": "Schedule a demo or presentation",
-    "price_details": "Discuss pricing and details",
-    "keep_browsing": "Continue exploring products",
-})
-_reachability = SERVICES.get("reachability", {
-    "phone_today": "By phone - today",
-    "email_week": "By email - this week",
-    "whatsapp_today": "Via WhatsApp - today",
-})
-
-_timing_keys = ", ".join(f'"{k}"' for k in _purchase_timing)
-_timing_opts = "\n".join(f'      - "{k}" = {v}' for k, v in _purchase_timing.items())
-_step_keys = ", ".join(f'"{k}"' for k in _service_options)
-_step_opts = "\n".join(f'      - "{k}" = {v}' for k, v in _service_options.items())
-_reach_keys = ", ".join(f'"{k}"' for k in _reachability)
-_reach_opts = "\n".join(f'      - "{k}" = {v}' for k, v in _reachability.items())
 
 # =============================================================================
 # BASE AGENT PROMPT — shared foundation for all sub-agents
@@ -91,115 +67,23 @@ UserInfo: {{user_info}}
 """
 
 # =============================================================================
-# SUB-AGENT PROMPTS — deterministic, minimal, single-purpose
+# COMPLETION AGENT PROMPT — handles confirmation, emails, and conversation wrap-up
 # =============================================================================
 
-GetUserNamePrompt = f"""
-Respond in {COMPANY['language']}. Be brief and polite.
+COMPLETION_AGENT_PROMPT = f"""
+Sie sind {MAIN_AGENT['name']}, und schliessen gerade eine Beratung bei {COMPANY['name']} ab.
+Die Kundin hat bereits ihre Kontaktdaten angegeben.
 
-TASK: Ask for the user's name.
+IHRE AUFGABEN:
+1. Bestaetigen Sie den Termin und fragen Sie, ob alles korrekt ist (Ja/Nein-Buttons)
+2. Wenn bestaetigt: Senden Sie die Bestaetigungs-E-Mail
+3. Bieten Sie an, eine Zusammenfassung per E-Mail zu senden
+4. Fragen Sie, ob die Kundin ein neues Gespraech beginnen moechte
 
-TOOL: collect_user_name(name: str)
-- Call IMMEDIATELY when user says any name.
-- Extract only the name, nothing else.
-"""
-
-GetUserEmailPrompt = f"""
-Respond in {COMPANY['language']}. Be brief and polite.
-
-TASK: Ask for user's phone OR email.
+Seien Sie kurz und herzlich. Verwenden Sie die "Sie"-Form. Max {BASE_AGENT['max_words']} Worte.
 
 TOOLS:
-- collect_phone(phoneNumber: str) — Call when user provides phone number.
-- collect_email(email: str) — Call when user provides email address.
-- collect_contact_info(email: str, phoneNumber: str) — Call when user provides BOTH.
-
-Extract only the requested values. Call the tool immediately.
-"""
-
-GetUserPhoneOnlyPrompt = f"""
-Respond in {COMPANY['language']}. Be brief and polite.
-
-TASK: Ask for user's phone number.
-
-TOOL: collect_phone(phoneNumber: str)
-- Call IMMEDIATELY when user provides a phone number.
-- Extract only the phone number.
-"""
-
-GetUserEmailOnlyPrompt = f"""
-Respond in {COMPANY['language']}. Be brief and polite.
-
-TASK: Ask for user's email address.
-
-TOOL: collect_email(email: str)
-- Call IMMEDIATELY when user provides an email address.
-- Extract only the email address.
-"""
-
-ScheduleCallPrompt = f"""
-Respond in {COMPANY['language']}. Be brief and polite.
-
-TASK: Ask for preferred date and time for a call.
-DO NOT say user's personal information aloud.
-
-TOOL: schedule_call(schedule_date: str, schedule_time: str)
-- Call IMMEDIATELY when user mentions any date or time.
-- schedule_date: DD.MM.YYYY format (e.g., 20.02.2026)
-- schedule_time: HH:MM format or time range (e.g., 14:00, 09:00-12:00, morning, afternoon)
-"""
-
-SummaryPrompt = f"""
-Respond in {COMPANY['language']}. Be brief and polite.
-
-TASK: Ask if user wants a summary emailed.
-
-TOOL: provide_summary(confirm: bool)
-- Call IMMEDIATELY after user responds.
-- confirm=true if user agrees/wants summary
-- confirm=false if user declines/says no
-"""
-
-SummarySenderPrompt = f"""
-Respond in {COMPANY['language']}. Be brief and polite.
-
-TASK: Ask for email address to send summary.
-DO NOT say user's personal information aloud.
-
-TOOL: collect_summary_email(email: str)
-- Call IMMEDIATELY when user provides an email address.
-- Extract only the email address.
-"""
-
-PurchaseTimingPrompt = f"""
-Respond in {COMPANY['language']}. Be brief and polite.
-
-TASK: Ask when user wants to purchase.
-
-TOOL: select_purchase_timing(selection: str)
-- Call IMMEDIATELY when user responds.
-- selection must be one of: {_timing_keys}
-{_timing_opts}
-"""
-
-NextStepPrompt = f"""
-Respond in {COMPANY['language']}. Be brief and polite.
-
-TASK: Ask what user wants to do next.
-
-TOOL: select_next_step(selection: str)
-- Call IMMEDIATELY when user responds.
-- selection must be one of: {_step_keys}
-{_step_opts}
-"""
-
-ReachabilityPrompt = f"""
-Respond in {COMPANY['language']}. Be brief and polite.
-
-TASK: Ask how user prefers to be contacted.
-
-TOOL: select_reachability(selection: str)
-- Call IMMEDIATELY when user responds.
-- selection must be one of: {_reach_keys}
-{_reach_opts}
+- send_appointment_emails(confirm: bool) — Rufen Sie auf wenn Kundin den Termin bestaetigt/ablehnt
+- send_summary_email(email: str) — Rufen Sie auf wenn Kundin eine Zusammenfassung moechte
+- start_new_conversation() — Rufen Sie auf wenn Kundin ein neues Gespraech moechte
 """

@@ -68,21 +68,17 @@ async def send_session_webhook(
     elif userdata.schedule_date:
         schedule = str(userdata.schedule_date)
 
-    # Potential score from lead confidence
-    potential_score = None
-    if userdata.last_confidence:
-        potential_score = int(userdata.last_confidence * 100)
-
     # Contact info
     contact_info = {
         "name": userdata.name,
         "email": userdata.email,
-        "phone": userdata.phoneNumber,
+        "phone": userdata.phone,
         "schedule": schedule,
-        "purchaseTiming": userdata.purchase_timing,
-        "potentialScore": potential_score,
-        "nextStep": userdata.next_step,
-        "reachability": userdata.reachability,
+        "leadScore": userdata.lead_score,
+        "leadLevel": userdata.lead_level,
+        "leadReasoning": userdata.lead_reasoning,
+        "preferredContact": userdata.preferred_contact,
+        "consentGiven": userdata.consent_given,
         "conversationBrief": _build_brief(userdata),
     }
 

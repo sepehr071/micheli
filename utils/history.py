@@ -133,9 +133,8 @@ def save_conversation_to_file(chat_messages, userdata, start_time=None):
 
         # Contact info section
         has_contact = any([
-            userdata.name, userdata.email, userdata.phoneNumber,
+            userdata.name, userdata.email, userdata.phone,
             userdata.schedule_date, userdata.schedule_time,
-            userdata.purchase_timing, userdata.next_step, userdata.reachability
         ])
 
         if has_contact:
@@ -146,14 +145,14 @@ def save_conversation_to_file(chat_messages, userdata, start_time=None):
             lines.append("")
             lines.append(f"{cl['name']} {userdata.name or ev}")
             lines.append(f"{cl['email']} {userdata.email or ev}")
-            lines.append(f"{cl['phone']} {userdata.phoneNumber or ev}")
+            lines.append(f"{cl['phone']} {userdata.phone or ev}")
             lines.append(
                 f"{cl['schedule']} {userdata.schedule_date or ev}"
                 f"{cl['schedule_time_sep'] + userdata.schedule_time if userdata.schedule_time else ''}"
             )
-            lines.append(f"{cl['purchase_timing']} {userdata.purchase_timing or ev}")
-            lines.append(f"{cl['next_step']} {userdata.next_step or ev}")
-            lines.append(f"{cl['reachability']} {userdata.reachability or ev}")
+            lines.append(f"Preferred Contact: {userdata.preferred_contact or ev}")
+            lines.append(f"Lead Score: {userdata.lead_score}/10 ({userdata.lead_level})")
+            lines.append(f"Consent: {'Yes' if userdata.consent_given else 'No'}")
 
         # AI summary section (if agent generated one)
         if userdata.conversation_summary:

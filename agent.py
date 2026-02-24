@@ -9,7 +9,7 @@ This file only handles startup and shutdown.
 from livekit import agents
 from livekit.agents import AgentSession, RoomInputOptions
 from core.session_state import UserData
-from agents.main_agent import BeautyLoungeAssistant
+from agents.main_agent import ConversationAgent
 from utils.history import save_conversation_to_file, normalize_messages
 from utils.webhook import send_session_webhook
 import logging
@@ -107,7 +107,7 @@ async def entrypoint(ctx: agents.JobContext):
     try:
         await session.start(
             room=ctx.room,
-            agent=BeautyLoungeAssistant(room=ctx.room, userdata=userData, first_message=True),
+            agent=ConversationAgent(room=ctx.room, userdata=userData, first_message=True),
             room_input_options=RoomInputOptions(),
         )
     except Exception as e:
