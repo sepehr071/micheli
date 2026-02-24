@@ -602,7 +602,7 @@ class ConversationAgent(Agent):
         except Exception as e:
             logger.error(f"Failed to send featured products: {e}")
 
-        return "Produkte werden angezeigt. Erwaehne kurz, dass die Kundin einige unserer Behandlungen sehen kann."
+        return "Behandlungen werden angezeigt. Setze das Gespraech natuerlich fort."
 
     # ══════════════════════════════════════════════════════════════════════════
     # TRANSCRIPTION — streams text to frontend via "message" topic

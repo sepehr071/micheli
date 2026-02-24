@@ -99,7 +99,7 @@ def save_conversation_to_file(chat_messages, userdata, start_time=None):
 
         # Build a map: user_msg_count -> list of search results to insert after that user message
         product_map = {}  # {after_user_msg: [(search_number, products), ...]}
-        all_products = userdata.all_retrieved_products if userdata.all_retrieved_products else []
+        all_products = getattr(userdata, 'all_retrieved_products', []) or []
         for search_idx, entry in enumerate(all_products):
             msg_count = entry.get("after_user_msg", 0)
             products = entry.get("products", [])

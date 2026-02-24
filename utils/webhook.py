@@ -31,6 +31,16 @@ def _build_brief(userdata: UserData) -> Optional[str]:
     return None
 
 
+def _map_lead_status(level: str) -> str:
+    """Map internal lead level to API schema status."""
+    return {
+        "HOT": "hot_lead",
+        "WARM": "warm_lead",
+        "COOL": "cool_lead",
+        "MILD": "mild_lead",
+    }.get(level, "mild_lead")
+
+
 async def send_session_webhook(
     session_id: str,
     chat_messages: List,
@@ -68,17 +78,15 @@ async def send_session_webhook(
     elif userdata.schedule_date:
         schedule = str(userdata.schedule_date)
 
-    # Contact info
+    # Contact info (mapped to ingest API schema)
     contact_info = {
         "name": userdata.name,
         "email": userdata.email,
         "phone": userdata.phone,
         "schedule": schedule,
-        "leadScore": userdata.lead_score,
-        "leadLevel": userdata.lead_level,
-        "leadReasoning": userdata.lead_reasoning,
-        "preferredContact": userdata.preferred_contact,
-        "consentGiven": userdata.consent_given,
+        "potentialScore": userdata.lead_score * 10,
+        "status": _map_lead_status(userdata.lead_level),
+        "reachability": userdata.preferred_contact,
         "conversationBrief": _build_brief(userdata),
     }
 
