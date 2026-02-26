@@ -61,13 +61,16 @@ class CompletionAgent(BaseAgent):
                     topic="trigger",
                 )
             else:
-                # No appointment — show summary offer buttons, LLM speaks via prompt
+                # No appointment — show summary offer buttons
                 await self.room.local_participant.send_text(
                     json.dumps(UI_BUTTONS["summary_offer"]),
                     topic="trigger",
                 )
         except Exception as e:
             logger.error(f"CompletionAgent on_enter failed: {e}")
+
+        # Trigger LLM to speak with the CompletionAgent prompt
+        await super().on_enter()
 
     # -----------------------------------------------------------------
     # Tool 1: Appointment emails
