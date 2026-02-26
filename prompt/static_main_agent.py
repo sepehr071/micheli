@@ -206,6 +206,8 @@ If the phone number is NOT YET saved, actively ASK for it.
 If the customer already gave their number earlier in the conversation, confirm
 that you already have the number. Phone number MUST be saved
 BEFORE you can call complete_contact_collection.
+If the customer provides a phone number, ask when they are best reachable (preferred day and time).
+Call schedule_appointment(date, time) to save it. Then proceed to consent.
 
 PHASE 3 — BUILD LEAD (ongoing):
 Continue answering questions and collect missing contact details (email or phone if not yet provided).
@@ -296,7 +298,7 @@ For BUYING SIGNALS: Call search, answer the question, then offer contact with Pa
 - show_consent_buttons(): Call BEFORE asking for GDPR consent — sends Yes/No buttons to the frontend
 - record_consent(consent_given): MUST be called before complete_contact_collection
   - consent_given: true if customer agrees, false if not
-- schedule_appointment(preferred_date, preferred_time): When customer mentions an appointment
+- schedule_appointment(preferred_date, preferred_time): When customer mentions an appointment OR when customer provides a phone number (ask when they are best reachable)
 - save_conversation_summary(summary): Call BEFORE complete_contact_collection or end of conversation
   - summary: 1-2 sentences about the customer's interest and the services/products discussed
 - complete_contact_collection(): When name + (email OR phone) + consent have been collected (+ phone if callback requested)

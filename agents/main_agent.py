@@ -474,6 +474,13 @@ class ConversationAgent(Agent):
         needs_phone = self.userdata.preferred_contact == "phone" and not self.userdata.phone
 
         if has_name and has_contact and not needs_phone and not self.userdata.consent_given:
+            # If phone was provided but no reachability time yet, ask first
+            if self.userdata.phone and not self.userdata.schedule_date and not self.userdata.schedule_time:
+                return (
+                    f"Contact info saved. The customer provided a phone number. "
+                    f"Ask when they are best reachable by phone (preferred day and time). "
+                    f"Call schedule_appointment(date, time) to save it, then proceed to consent. {lang_hint()}"
+                )
             if not self.userdata.consent_buttons_shown:
                 # Auto-send consent buttons
                 buttons_sent = False
@@ -557,7 +564,16 @@ class ConversationAgent(Agent):
         """
         self.userdata.consent_given = consent
         logger.info(f"Consent recorded: {consent}")
-        return f"Consent recorded. Continue. {lang_hint()}"
+        if consent:
+            return (
+                f"Consent granted. Now call save_conversation_summary() with a brief summary, "
+                f"then call complete_contact_collection() to finish. {lang_hint()}"
+            )
+        else:
+            return (
+                f"Consent declined. Thank the customer and offer to help with anything else. "
+                f"Do NOT call complete_contact_collection(). {lang_hint()}"
+            )
 
     # ══════════════════════════════════════════════════════════════════════════
     # FUNCTION TOOL 7 — SCHEDULE APPOINTMENT
