@@ -669,8 +669,6 @@ class ConversationAgent(Agent):
         if self.userdata.featured_shown:
             return f"Already shown. Do not call again. {lang_hint()}"
 
-        self.userdata.featured_shown = True
-
         try:
             # Query Pinecone for featured services
             featured_results = await asyncio.to_thread(
@@ -691,16 +689,25 @@ class ConversationAgent(Agent):
                 })
 
             if showcase:
+                self.userdata.featured_shown = True
                 asyncio.create_task(
                     self.room.local_participant.send_text(
                         json.dumps(showcase), topic="products"
                     )
                 )
-                logger.info(f"Featured services sent: {[p['product_name'] for p in showcase]}")
+                service_names = [p["product_name"] for p in showcase]
+                logger.info(f"Featured services sent: {service_names}")
+                return (
+                    f"The customer can now see these services: {service_names}. "
+                    f"Weave 1-2 of these naturally into your response as recommendations, "
+                    f"but do NOT say you displayed or showed them. Speak from your expertise. {lang_hint()}"
+                )
+            else:
+                logger.warning("No featured services returned from Pinecone")
+                return f"No featured services available. Ask the customer about their interests. {lang_hint()}"
         except Exception as e:
             logger.error(f"Failed to send featured services: {e}")
-
-        return f"Services displayed. Continue naturally. {lang_hint()}"
+            return f"Could not load services. Ask the customer about their interests. {lang_hint()}"
 
     # ══════════════════════════════════════════════════════════════════════════
     # FUNCTION TOOL 11 — SHOW NEW CONVERSATION BUTTON

@@ -259,33 +259,33 @@ class SearchPipeline:
         """
         featured = []
 
-        # Query facial/body treatments
+        # Query facial/body treatments (semantic search already returns relevant results)
         try:
-            treatments = self.search_services("Gesichtsbehandlung Kosmetik Pflege", top_k=treatments_count * 2)
-            for item in treatments:
-                if item.get("category") == "treatments" and len([f for f in featured if f.get("category") == "treatments"]) < treatments_count:
-                    featured.append(item)
-            self.logger.info(f"Featured treatments: {len([f for f in featured if f.get('category') == 'treatments'])} items")
+            treatments = self.search_services("Gesichtsbehandlung Kosmetik Pflege", top_k=treatments_count)
+            for item in treatments[:treatments_count]:
+                item["category"] = "treatments"
+                featured.append(item)
+            self.logger.info(f"Featured treatments: {len(treatments[:treatments_count])} items")
         except Exception as e:
             self.logger.error(f"Failed to get featured treatments: {e}")
 
         # Query permanent makeup
         try:
-            pmu = self.search_services("Permanent Make-Up Augenbrauen Lippen", top_k=pmu_count * 2)
-            for item in pmu:
-                if item.get("category") == "permanent_makeup" and len([f for f in featured if f.get("category") == "permanent_makeup"]) < pmu_count:
-                    featured.append(item)
-            self.logger.info(f"Featured PMU: {len([f for f in featured if f.get('category') == 'permanent_makeup'])} items")
+            pmu = self.search_services("Permanent Make-Up Augenbrauen Lippen", top_k=pmu_count)
+            for item in pmu[:pmu_count]:
+                item["category"] = "permanent_makeup"
+                featured.append(item)
+            self.logger.info(f"Featured PMU: {len(pmu[:pmu_count])} items")
         except Exception as e:
             self.logger.error(f"Failed to get featured PMU: {e}")
 
         # Query wellness/massage
         try:
-            wellness = self.search_services("Massage Wellness Entspannung", top_k=wellness_count * 2)
-            for item in wellness:
-                if item.get("category") == "wellness" and len([f for f in featured if f.get("category") == "wellness"]) < wellness_count:
-                    featured.append(item)
-            self.logger.info(f"Featured wellness: {len([f for f in featured if f.get('category') == 'wellness'])} items")
+            wellness = self.search_services("Massage Wellness Entspannung", top_k=wellness_count)
+            for item in wellness[:wellness_count]:
+                item["category"] = "wellness"
+                featured.append(item)
+            self.logger.info(f"Featured wellness: {len(wellness[:wellness_count])} items")
         except Exception as e:
             self.logger.error(f"Failed to get featured wellness: {e}")
 
