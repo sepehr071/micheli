@@ -16,7 +16,7 @@ from typing import AsyncIterable, List, Dict, Any
 from livekit.agents import function_tool, ModelSettings, Agent
 from livekit.rtc import DataPacket
 
-from agents.base import safe_generate_reply, create_realtime_model
+from agents.base import safe_generate_reply, create_realtime_model, _NEW_CONV_KEYS
 from core.session_state import UserData, RunContext_T
 from config.messages import AGENT_MESSAGES, UI_BUTTONS, CONVERSATION_RULES
 from config.language import (
@@ -27,8 +27,10 @@ from config.language import (
     lang_hint,
 )
 from prompt.static_main_agent import CONVERSATION_AGENT_PROMPT, CONVERSATION_AGENT_GREETING
+from datetime import datetime
 from utils.helpers import get_greeting, is_valid_email_syntax
-from utils.history import normalize_messages
+from utils.history import normalize_messages, save_conversation_to_file
+from utils.webhook import send_session_webhook
 from utils.search_pipeline import SearchPipeline
 
 logger = logging.getLogger(__name__)
@@ -113,8 +115,17 @@ class ConversationAgent(Agent):
                     logger.warning(f"Failed to update language: {parsed}")
 
             elif data.topic == "trigger":
-                # Inject button click value as user input so the LLM can respond
                 if isinstance(parsed, dict):
+                    # Check for new conversation button first
+                    for key in parsed.keys():
+                        if str(key).lower() in _NEW_CONV_KEYS:
+                            logger.info("New conversation button clicked in ConversationAgent")
+                            if hasattr(self, "session") and self.session:
+                                await self.session.generate_reply(
+                                    user_input="I want to start a new conversation"
+                                )
+                            return
+                    # Normal button — inject value as user input
                     value = next(iter(parsed.values()), None)
                     if value and hasattr(self, "session") and self.session:
                         logger.info(f"Button clicked — injecting as user input: {value}")
@@ -438,22 +449,72 @@ class ConversationAgent(Agent):
             phone: Customer's phone number
             preferred_contact: How they prefer to be reached: "phone", "whatsapp", or "email"
         """
+        # Save all non-email fields first
         if name:
             self.userdata.name = name.strip().title()
             logger.info(f"Saved name: {self.userdata.name}")
-        if email:
-            if is_valid_email_syntax(email.strip()):
-                self.userdata.email = email.strip().lower()
-                logger.info(f"Saved email: {self.userdata.email}")
-            else:
-                return f"Email seems invalid. Ask customer again. {lang_hint()}"
         if phone:
             self.userdata.phone = phone.strip()
             logger.info(f"Saved phone: {self.userdata.phone}")
         if preferred_contact and preferred_contact in ("phone", "whatsapp", "email"):
             self.userdata.preferred_contact = preferred_contact
             logger.info(f"Saved preferred contact: {preferred_contact}")
-        return f"Saved. Continue naturally. {lang_hint()}"
+
+        # Validate and save email last (so other fields are not lost on invalid email)
+        if email:
+            if is_valid_email_syntax(email.strip()):
+                self.userdata.email = email.strip().lower()
+                logger.info(f"Saved email: {self.userdata.email}")
+            else:
+                return f"Email seems invalid. Other info saved. Ask for email again. {lang_hint()}"
+
+        # Check if enough contact info is now available for consent step
+        has_name = bool(self.userdata.name)
+        has_contact = bool(self.userdata.email) or bool(self.userdata.phone)
+        needs_phone = self.userdata.preferred_contact == "phone" and not self.userdata.phone
+
+        if has_name and has_contact and not needs_phone and not self.userdata.consent_given:
+            if not self.userdata.consent_buttons_shown:
+                # Auto-send consent buttons
+                buttons_sent = False
+                try:
+                    await self.room.local_participant.send_text(
+                        json.dumps(UI_BUTTONS.get("consent", {"Yes": "Yes", "No": "No"})),
+                        topic="trigger",
+                    )
+                    self.userdata.consent_buttons_shown = True
+                    buttons_sent = True
+                    logger.info("Consent buttons auto-sent after contact info complete")
+                except Exception as e:
+                    logger.error(f"Failed to auto-send consent buttons: {e}")
+                if buttons_sent:
+                    return (
+                        f"Contact info saved. Consent buttons are now displayed. "
+                        f"You MUST now ask for GDPR consent: "
+                        f"'May we use your contact information to reach out to you?' "
+                        f"Wait for response, then call record_consent(). {lang_hint()}"
+                    )
+                else:
+                    return (
+                        f"Contact info saved. Buttons failed to send. "
+                        f"Ask for GDPR consent verbally and call record_consent(). {lang_hint()}"
+                    )
+            else:
+                return (
+                    f"Contact info saved. Consent buttons already shown. "
+                    f"Ask for consent if not yet given, then call record_consent(). {lang_hint()}"
+                )
+        elif has_name and has_contact and not needs_phone and self.userdata.consent_given:
+            return (
+                f"Contact info saved. All requirements met. "
+                f"Call save_conversation_summary() then complete_contact_collection(). {lang_hint()}"
+            )
+        elif has_name and not has_contact:
+            return f"Name saved. Now ask for email or phone number. {lang_hint()}"
+        elif not has_name and has_contact:
+            return f"Contact saved. Now ask for the customer's name. {lang_hint()}"
+        else:
+            return f"Saved. Still need: name + (email or phone). {lang_hint()}"
 
     # ══════════════════════════════════════════════════════════════════════════
     # FUNCTION TOOL 6a — SHOW CONSENT BUTTONS
@@ -468,7 +529,6 @@ class ConversationAgent(Agent):
         """
         if self.userdata.consent_buttons_shown:
             return f"Consent buttons already shown. Do not show again. {lang_hint()}"
-        self.userdata.consent_buttons_shown = True
         try:
             await self.room.local_participant.send_text(
                 json.dumps(
@@ -476,6 +536,7 @@ class ConversationAgent(Agent):
                 ),
                 topic="trigger",
             )
+            self.userdata.consent_buttons_shown = True
         except Exception as e:
             logger.error(f"Failed to send consent buttons: {e}")
         logger.info("Consent buttons sent to customer")
@@ -624,6 +685,53 @@ class ConversationAgent(Agent):
             logger.error(f"Failed to send featured services: {e}")
 
         return f"Services displayed. Continue naturally. {lang_hint()}"
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # FUNCTION TOOL 11 — SHOW NEW CONVERSATION BUTTON
+    # ══════════════════════════════════════════════════════════════════════════
+
+    @function_tool
+    async def show_new_conversation_button(self, context: RunContext_T):
+        """
+        Show a 'New Conversation' button. Call this ONLY when the customer
+        insists on leaving and you have already tried to help them further.
+        You MUST call save_conversation_summary() BEFORE calling this.
+        """
+        try:
+            await self.room.local_participant.send_text(
+                json.dumps(UI_BUTTONS["new_conversation"]),
+                topic="trigger",
+            )
+        except Exception as e:
+            logger.error(f"New conversation button failed: {e}")
+        return f"New conversation button shown. Say a brief warm goodbye. {lang_hint()}"
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # FUNCTION TOOL 12 — START NEW CONVERSATION
+    # ══════════════════════════════════════════════════════════════════════════
+
+    @function_tool
+    async def start_new_conversation(self, context: RunContext_T):
+        """Call when the customer wants to start a new conversation."""
+        self._lang_listener_active = False
+        try:
+            await self.room.local_participant.send_text(
+                json.dumps({"clean": True}), topic="clean"
+            )
+        except Exception as e:
+            logger.error(f"Clean message failed: {e}")
+
+        logger.info("Starting new conversation from ConversationAgent")
+        try:
+            chat_history = list(self.session.history.items)
+            save_conversation_to_file(chat_history, self.userdata)
+            session_id = f"session_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            await send_session_webhook(session_id, chat_history, self.userdata)
+            self.userdata._history_saved = True
+        except Exception as e:
+            logger.error(f"Failed to save conversation: {e}")
+
+        return ConversationAgent(room=self.room, userdata=UserData())
 
     # ══════════════════════════════════════════════════════════════════════════
     # TRANSCRIPTION — streams text to frontend via "message" topic

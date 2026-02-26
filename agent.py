@@ -107,7 +107,7 @@ async def entrypoint(ctx: agents.JobContext):
 
     try:
         avatar = bithuman.AvatarSession(
-            model_path="./new_core.imx", # Your bitHuman avatar ID
+            model_path="./lena.imx", # Your bitHuman avatar ID
             model="essence", # Use 'expression' for dynamic expressions and emotional responses
         )
         await avatar.start(session, room=ctx.room)
