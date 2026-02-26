@@ -19,13 +19,23 @@ from config.search import HYBRID_SEARCH_ALPHA
 
 load_dotenv()
 
-class ProductSearchPipeline:
+class SearchPipeline:
+    """
+    Dual-index search pipeline for Beauty Lounge.
+
+    Two separate Pinecone indexes:
+    - Services (INDEX_NAME_SERVICE): Beauty services the company offers
+      (treatments, permanent makeup, wellness, massages)
+    - Products (INDEX_NAME): Retail products users can buy from the company
+    """
+
     def __init__(self):
         self._setup_logging()
         self._load_config()
         self._initialize_pinecone()
         self._initialize_embedding_model()
-        self.vectorizer = joblib.load('tfidf_vectorizer.joblib')
+        self.service_vectorizer = joblib.load('tfidf_vectorizer_service.joblib')
+        self.product_vectorizer = joblib.load('tfidf_vectorizer.joblib')
         self.current_date = datetime.now().strftime("%B %d, %Y")
 
     def _setup_logging(self):
@@ -43,40 +53,36 @@ class ProductSearchPipeline:
         self.pinecone_api_key = os.getenv('PINECONE_API_KEY')
         if not self.pinecone_api_key:
             raise ValueError("Missing PINECONE_API_KEY environment variable")
-        
+
         self.pinecone_region = os.getenv('PINECONE_REGION', "us-east-1")
-        
+
         self.openai_api_key = os.getenv('OPENAI_API_KEY')
         if not self.openai_api_key:
             raise ValueError("Missing OPENAI_API_KEY environment variable")
-        
+
         self.embedding_model_name = os.getenv('EMBEDDING_MODEL', "text-embedding-3-large")
-        
-        self.index_name = os.getenv("INDEX_NAME", "test")
+
+        # Two separate index names for services and products
+        self.service_index_name = os.getenv("INDEX_NAME_SERVICE", "beauty-services")
+        self.product_index_name = os.getenv("INDEX_NAME", "beauty-products")
         self.dimension = int(os.getenv("DIMENSION", "3072"))
 
     def _initialize_pinecone(self):
-        self.logger.info("Initializing Pinecone...")
+        """Initialize both service and product indexes."""
+        self.logger.info("Initializing Pinecone indexes...")
         max_retries = 3
         for attempt in range(max_retries):
             try:
                 pc = Pinecone(api_key=self.pinecone_api_key)
 
-                if self.index_name not in pc.list_indexes().names():
-                    self.logger.info(f"Creating Pinecone index: {self.index_name}")
-                    pc.create_index(
-                        name=self.index_name,
-                        vector_type="dense",
-                        dimension=self.dimension,
-                        metric='dotproduct',
-                        spec=ServerlessSpec(
-                            cloud='gcp',
-                            region=self.pinecone_region
-                        )
-                    )
-                self.index = pc.Index(self.index_name)
+                # Initialize service index
+                self.service_index = self._get_or_create_index(pc, self.service_index_name)
+                self.logger.info(f"Connected to SERVICE index: {self.service_index_name}")
 
-                self.logger.info(f"Connected to Pinecone index: {self.index_name}")
+                # Initialize product index
+                self.product_index = self._get_or_create_index(pc, self.product_index_name)
+                self.logger.info(f"Connected to PRODUCT index: {self.product_index_name}")
+
                 return
             except Exception as e:
                 self.logger.error(f"Pinecone init attempt {attempt + 1}/{max_retries}: {e}")
@@ -84,6 +90,22 @@ class ProductSearchPipeline:
                     time.sleep(5 * (attempt + 1))
                 else:
                     raise
+
+    def _get_or_create_index(self, pc, index_name: str):
+        """Get or create a Pinecone index."""
+        if index_name not in pc.list_indexes().names():
+            self.logger.info(f"Creating Pinecone index: {index_name}")
+            pc.create_index(
+                name=index_name,
+                vector_type="dense",
+                dimension=self.dimension,
+                metric='dotproduct',
+                spec=ServerlessSpec(
+                    cloud='gcp',
+                    region=self.pinecone_region
+                )
+            )
+        return pc.Index(index_name)
 
     def _initialize_embedding_model(self):
         self.logger.info("Loading embedding model...")
@@ -112,12 +134,14 @@ class ProductSearchPipeline:
             self.logger.error(f"Failed to load embedding model: {e}")
             raise
 
-    def process_query(self, query: str) -> tuple:
+    def process_query(self, query: str, vectorizer=None) -> tuple:
         self.logger.info("Step 4: Processing query...")
         start_time = time.time()
         try:
             query_emb = self.embedding_model.encode([query])[0]
-            sparse_embedding = self.vectorizer.transform([query])[0]
+            # Use provided vectorizer or default to product vectorizer for backward compatibility
+            tfidf = vectorizer if vectorizer else self.product_vectorizer
+            sparse_embedding = tfidf.transform([query])[0]
             indices = sparse_embedding.indices.tolist()
             values = sparse_embedding.data.tolist()
             sparse_vec = {"indices": indices, "values": values}
@@ -140,21 +164,21 @@ class ProductSearchPipeline:
         hdense = [v * alpha for v in dense]
         return hdense, hsparse
 
-    def retrieve_products(self, dense_emb: np.ndarray, sparse_vec: Dict, top_k: int = 20, alpha: float = 0.7) -> List[Dict]:
-        self.logger.info("Step 5: Retrieving products with hybrid search...")
+    def _retrieve(self, index, dense_emb: np.ndarray, sparse_vec: Dict, top_k: int = 5, alpha: float = 0.7) -> List[Dict]:
+        """Core retrieval logic - used by both search_services and search_products."""
         start_time = time.time()
         try:
             hdense, hsparse = self.hybrid_score_norm(dense_emb.tolist(), sparse_vec, alpha)
 
             if not hsparse['values']:
                 self.logger.info("Sparse vector empty - falling back to dense-only search")
-                results = self.index.query(
+                results = index.query(
                     vector=hdense,
                     top_k=top_k,
                     include_metadata=True
                 )
             else:
-                results = self.index.query(
+                results = index.query(
                     vector=hdense,
                     sparse_vector=hsparse,
                     top_k=top_k,
@@ -164,36 +188,123 @@ class ProductSearchPipeline:
             retrieved = [{"id": match['id'], "score": match['score'], "metadata": match['metadata']} for match in results['matches']]
 
             for i, item in enumerate(retrieved):
-                product_name = item['metadata'].get('name', item['metadata'].get('question', 'Unknown'))
-                self.logger.info(f"Retrieved product {i+1}: ID={item['id']}, Score={item['score']}, Name={product_name}")
+                item_name = item['metadata'].get('name', item['metadata'].get('question', 'Unknown'))
+                self.logger.info(f"Retrieved item {i+1}: ID={item['id']}, Score={item['score']}, Name={item_name}")
 
-            self.logger.info(f"Step 5 completed: Retrieved {len(retrieved)} products in {time.time() - start_time:.2f} seconds")
+            self.logger.info(f"Retrieval completed: Retrieved {len(retrieved)} items in {time.time() - start_time:.2f} seconds")
             return retrieved
         except Exception as e:
-            self.logger.error(f"Step 5 failed: {e}")
+            self.logger.error(f"Retrieval failed: {e}")
             raise
+
+    def search_services(self, query: str, top_k: int = 5) -> List[Dict]:
+        """
+        Search beauty SERVICES (treatments, permanent makeup, wellness).
+        Uses INDEX_NAME_SERVICE and service-specific TF-IDF vectorizer.
+
+        Args:
+            query: The search query
+            top_k: Number of results to return
+
+        Returns:
+            List of service metadata dicts
+        """
+        self.logger.info(f"Searching SERVICES: {query}")
+        query_emb, sparse_vec = self.process_query(query, vectorizer=self.service_vectorizer)
+        retrieved = self._retrieve(self.service_index, query_emb, sparse_vec, top_k=top_k, alpha=HYBRID_SEARCH_ALPHA)
+        return [item["metadata"] for item in retrieved]
+
+    def search_products(self, query: str, top_k: int = 5) -> List[Dict]:
+        """
+        Search retail PRODUCTS (items users can buy).
+        Uses INDEX_NAME and product-specific TF-IDF vectorizer.
+
+        Args:
+            query: The search query
+            top_k: Number of results to return
+
+        Returns:
+            List of product metadata dicts
+        """
+        self.logger.info(f"Searching PRODUCTS: {query}")
+        query_emb, sparse_vec = self.process_query(query, vectorizer=self.product_vectorizer)
+        retrieved = self._retrieve(self.product_index, query_emb, sparse_vec, top_k=top_k, alpha=HYBRID_SEARCH_ALPHA)
+        return [item["metadata"] for item in retrieved]
 
     def run(self, query: str, top_k: int = 5) -> List[Dict]:
         """
-        Run the search pipeline.
+        Run the search pipeline on SERVICES index (backward compatibility).
         Returns: results: List[dict]
         """
         self.logger.info(f"Starting pipeline execution on {self.current_date}...")
+        return self.search_services(query, top_k=top_k)
 
-        query_emb, sparse_vec = self.process_query(query)
+    def get_featured_services(
+        self,
+        treatments_count: int = 3,
+        pmu_count: int = 2,
+        wellness_count: int = 2,
+    ) -> List[Dict]:
+        """
+        Get featured SERVICES for initial showcase.
+        Queries the SERVICES index with category-specific queries.
 
-        retrieved = self.retrieve_products(query_emb, sparse_vec, top_k=top_k, alpha=HYBRID_SEARCH_ALPHA)
+        Args:
+            treatments_count: Number of facial/body treatments to return
+            pmu_count: Number of permanent makeup items to return
+            wellness_count: Number of wellness/massage items to return
 
-        data = [item["metadata"] for item in retrieved]
+        Returns:
+            List of service metadata dicts with category field included
+        """
+        featured = []
 
-        return data
+        # Query facial/body treatments
+        try:
+            treatments = self.search_services("Gesichtsbehandlung Kosmetik Pflege", top_k=treatments_count * 2)
+            for item in treatments:
+                if item.get("category") == "treatments" and len([f for f in featured if f.get("category") == "treatments"]) < treatments_count:
+                    featured.append(item)
+            self.logger.info(f"Featured treatments: {len([f for f in featured if f.get('category') == 'treatments'])} items")
+        except Exception as e:
+            self.logger.error(f"Failed to get featured treatments: {e}")
+
+        # Query permanent makeup
+        try:
+            pmu = self.search_services("Permanent Make-Up Augenbrauen Lippen", top_k=pmu_count * 2)
+            for item in pmu:
+                if item.get("category") == "permanent_makeup" and len([f for f in featured if f.get("category") == "permanent_makeup"]) < pmu_count:
+                    featured.append(item)
+            self.logger.info(f"Featured PMU: {len([f for f in featured if f.get('category') == 'permanent_makeup'])} items")
+        except Exception as e:
+            self.logger.error(f"Failed to get featured PMU: {e}")
+
+        # Query wellness/massage
+        try:
+            wellness = self.search_services("Massage Wellness Entspannung", top_k=wellness_count * 2)
+            for item in wellness:
+                if item.get("category") == "wellness" and len([f for f in featured if f.get("category") == "wellness"]) < wellness_count:
+                    featured.append(item)
+            self.logger.info(f"Featured wellness: {len([f for f in featured if f.get('category') == 'wellness'])} items")
+        except Exception as e:
+            self.logger.error(f"Failed to get featured wellness: {e}")
+
+        self.logger.info(f"Total featured services: {len(featured)}")
+        return featured
+
+    # Backward compatibility alias
+    get_featured_products = get_featured_services
+
+
+# Backward compatibility alias for class name
+ProductSearchPipeline = SearchPipeline
 
 if __name__ == "__main__":
     from flask import Flask, request, jsonify
     from config.search import FLASK_PORT
 
     app = Flask(__name__)
-    pipeline = ProductSearchPipeline()
+    pipeline = SearchPipeline()
 
     @app.route('/search', methods=['POST'])
     def search():
@@ -204,8 +315,13 @@ if __name__ == "__main__":
 
             query = data['query']
             top_k = data.get('top_k', 5)
+            search_type = data.get('type', 'services')  # 'services' or 'products'
 
-            results = pipeline.run(query, top_k)
+            if search_type == 'products':
+                results = pipeline.search_products(query, top_k)
+            else:
+                results = pipeline.search_services(query, top_k)
+
             return jsonify({"results": results})
         except Exception as e:
             return jsonify({"error": str(e)}), 500
@@ -213,11 +329,14 @@ if __name__ == "__main__":
     @app.route('/health')
     def health():
         try:
-            stats = pipeline.index.describe_index_stats()
+            service_stats = pipeline.service_index.describe_index_stats()
+            product_stats = pipeline.product_index.describe_index_stats()
             return jsonify({
                 "status": "ok",
-                "index": pipeline.index_name,
-                "vectors": stats.get("total_vector_count", "unknown"),
+                "service_index": pipeline.service_index_name,
+                "service_vectors": service_stats.get("total_vector_count", "unknown"),
+                "product_index": pipeline.product_index_name,
+                "product_vectors": product_stats.get("total_vector_count", "unknown"),
             }), 200
         except Exception as e:
             return jsonify({"status": "error", "detail": str(e)}), 503

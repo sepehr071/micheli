@@ -8,6 +8,7 @@ This file only handles startup and shutdown.
 
 from livekit import agents
 from livekit.agents import AgentSession, RoomInputOptions
+from livekit.plugins import  bithuman
 from core.session_state import UserData
 from agents.main_agent import ConversationAgent
 from utils.history import save_conversation_to_file, normalize_messages
@@ -105,6 +106,11 @@ async def entrypoint(ctx: agents.JobContext):
     session.on("user_input_transcribed", translate_transcribed_text)
 
     try:
+        avatar = bithuman.AvatarSession(
+            model_path="./new_core.imx", # Your bitHuman avatar ID
+            model="essence", # Use 'expression' for dynamic expressions and emotional responses
+        )
+        await avatar.start(session, room=ctx.room)
         await session.start(
             room=ctx.room,
             agent=ConversationAgent(room=ctx.room, userdata=userData, first_message=True),

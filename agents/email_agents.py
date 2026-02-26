@@ -16,7 +16,8 @@ from livekit.agents import function_tool
 from agents.base import BaseAgent
 from core.session_state import UserData, RunContext_T
 from config.company import COMPANY
-from config.messages import AGENT_MESSAGES, UI_BUTTONS, FALLBACK_NOT_PROVIDED
+from config.language import lang_hint
+from config.messages import UI_BUTTONS, FALLBACK_NOT_PROVIDED
 from utils.smtp import send_email, send_email_summary, send_lead_notification
 from utils.history import save_conversation_to_file
 from utils.webhook import send_session_webhook
@@ -50,15 +51,23 @@ class CompletionAgent(BaseAgent):
         )
 
     async def on_enter(self):
-        """Show appointment confirmation buttons when entering this agent."""
+        """Show appointment confirmation or skip to summary offer."""
         logger.info("CompletionAgent on_enter")
         try:
-            await self.room.local_participant.send_text(
-                json.dumps(UI_BUTTONS["appointment_confirm"]),
-                topic="trigger",
-            )
+            if self.userdata.schedule_date or self.userdata.schedule_time:
+                # Appointment was scheduled — show confirmation buttons
+                await self.room.local_participant.send_text(
+                    json.dumps(UI_BUTTONS["appointment_confirm"]),
+                    topic="trigger",
+                )
+            else:
+                # No appointment — show summary offer buttons, LLM speaks via prompt
+                await self.room.local_participant.send_text(
+                    json.dumps(UI_BUTTONS["summary_offer"]),
+                    topic="trigger",
+                )
         except Exception as e:
-            logger.error(f"CompletionAgent buttons failed: {e}")
+            logger.error(f"CompletionAgent on_enter failed: {e}")
 
     # -----------------------------------------------------------------
     # Tool 1: Appointment emails
@@ -97,7 +106,6 @@ class CompletionAgent(BaseAgent):
             lead_score = self.userdata.lead_score
             confidence = self.userdata.lead_score * 10  # convert 0-10 to 0-100 scale
 
-            all_leads_sent = True
             for company_email in COMPANY_LEAD_EMAILS:
                 try:
                     lead_sent = send_lead_notification(
@@ -117,24 +125,11 @@ class CompletionAgent(BaseAgent):
                     if lead_sent:
                         logger.info(f"Lead notification sent to {company_email}")
                     else:
-                        all_leads_sent = False
                         logger.error(f"Lead notification to {company_email} failed")
                 except Exception as e:
-                    all_leads_sent = False
                     logger.error(f"Lead notification to {company_email} crashed: {e}")
 
-            # 3. Voice response based on lead email success
-            if all_leads_sent:
-                await self._safe_reply(AGENT_MESSAGES["email_thanks"])
-            else:
-                await self._safe_reply(AGENT_MESSAGES["lead_email_failed"])
-
-        else:
-            # User declined — acknowledge politely
-            await self._safe_reply(AGENT_MESSAGES["email_thanks"])
-
-        # Always offer summary after appointment handling
-        await self._safe_reply(AGENT_MESSAGES["offer_summary"])
+        # Show summary offer buttons
         try:
             await self.room.local_participant.send_text(
                 json.dumps(UI_BUTTONS["summary_offer"]),
@@ -142,6 +137,10 @@ class CompletionAgent(BaseAgent):
             )
         except Exception as e:
             logger.error(f"Summary offer buttons failed: {e}")
+
+        if confirm:
+            return f"Appointment confirmed and emails sent. Now thank the customer briefly and offer to send a conversation summary via email. The summary buttons are shown. {lang_hint()}"
+        return f"Customer declined the appointment. Acknowledge politely and offer to send a conversation summary via email. The summary buttons are shown. {lang_hint()}"
 
     # -----------------------------------------------------------------
     # Tool 2: Summary email
@@ -156,7 +155,6 @@ class CompletionAgent(BaseAgent):
         """
         # Handle decline
         if email and email.strip().lower() == "decline":
-            await self._safe_reply(AGENT_MESSAGES["no_summary_thanks"])
             # Show new conversation buttons
             try:
                 await self.room.local_participant.send_text(
@@ -165,7 +163,7 @@ class CompletionAgent(BaseAgent):
                 )
             except Exception as e:
                 logger.error(f"New conversation buttons failed: {e}")
-            return
+            return f"Customer declined summary. Thank them warmly and say goodbye. {lang_hint()}"
 
         # Determine recipient email
         recipient = None
@@ -176,14 +174,12 @@ class CompletionAgent(BaseAgent):
                 recipient = clean_email
             else:
                 logger.info(f"Invalid email syntax: {email}")
-                await self._safe_reply(AGENT_MESSAGES["invalid_email"])
-                return
+                return f"The email address is invalid. Ask the customer for a correct email address. {lang_hint()}"
         elif self.userdata.email:
             recipient = self.userdata.email
         else:
             # No email available — ask for it
-            await self._safe_reply(AGENT_MESSAGES["ask_email_for_summary"])
-            return
+            return f"No email address available. Ask the customer for their email address to send the summary. {lang_hint()}"
 
         # Send the summary
         summary_context = self.userdata.conversation_summary
@@ -206,11 +202,6 @@ class CompletionAgent(BaseAgent):
             logger.error(f"Summary email crashed: {e}")
             success = False
 
-        if success:
-            await self._safe_reply(AGENT_MESSAGES["summary_sent"])
-        else:
-            await self._safe_reply(AGENT_MESSAGES["email_error"])
-
         # Show new conversation buttons
         try:
             await self.room.local_participant.send_text(
@@ -219,6 +210,10 @@ class CompletionAgent(BaseAgent):
             )
         except Exception as e:
             logger.error(f"New conversation buttons failed: {e}")
+
+        if success:
+            return f"Summary email sent successfully to {recipient}. Thank the customer warmly and say goodbye. {lang_hint()}"
+        return f"Summary email failed to send. Apologize briefly and say goodbye. {lang_hint()}"
 
     # -----------------------------------------------------------------
     # Tool 3: New conversation
@@ -229,6 +224,9 @@ class CompletionAgent(BaseAgent):
         """
         Call this when the user wants to start a new conversation.
         """
+        # Deactivate listener before handoff to avoid duplicate processing
+        self._lang_listener_active = False
+
         # 1. Clean the frontend
         try:
             await self.room.local_participant.send_text(

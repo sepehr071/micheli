@@ -13,6 +13,9 @@ livekit-plugins-elevenlabs==1.2.14
 livekit-plugins-google==1.2.6
 livekit-plugins-noise-cancellation==0.2.4
 livekit-blingfire==1.0.0
+livekit-plugins-bithuman
+bithuman
+
 
 # OpenAI / LangChain
 openai==2.7.2

@@ -36,6 +36,7 @@ class UserData:
     expert_offered: bool = False
     expert_accepted: bool = False
     consent_given: bool = False      # GDPR: explicit consent to be contacted
+    consent_buttons_shown: bool = False  # True after show_consent_buttons() called once
     featured_shown: bool = False     # True after show_featured_products() called once
 
     # Conversation

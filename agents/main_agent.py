@@ -29,7 +29,7 @@ from config.language import (
 from prompt.static_main_agent import CONVERSATION_AGENT_PROMPT, CONVERSATION_AGENT_GREETING
 from utils.helpers import get_greeting, is_valid_email_syntax
 from utils.history import normalize_messages
-from utils.search_pipeline import ProductSearchPipeline
+from utils.search_pipeline import SearchPipeline
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +64,7 @@ class ConversationAgent(Agent):
             self.userdata = userdata
         self.first_message = first_message
         self.room = room
-        self.search_pipeline = ProductSearchPipeline()
+        self.search_pipeline = SearchPipeline()
         self._original_instructions = CONVERSATION_AGENT_PROMPT
         self._lang_listener_active = True
 
@@ -111,6 +111,14 @@ class ConversationAgent(Agent):
                     await self._update_agent_instructions()
                 else:
                     logger.warning(f"Failed to update language: {parsed}")
+
+            elif data.topic == "trigger":
+                # Inject button click value as user input so the LLM can respond
+                if isinstance(parsed, dict):
+                    value = next(iter(parsed.values()), None)
+                    if value and hasattr(self, "session") and self.session:
+                        logger.info(f"Button clicked — injecting as user input: {value}")
+                        await self.session.generate_reply(user_input=str(value))
 
         except json.JSONDecodeError as e:
             logger.debug(f"Data received is not valid JSON: {e}")
@@ -209,77 +217,45 @@ class ConversationAgent(Agent):
         return "\n\n---\n\n".join(formatted)
 
     # ══════════════════════════════════════════════════════════════════════════
-    # FUNCTION TOOL 1 — SEARCH TREATMENTS
+    # FUNCTION TOOL 1 — SEARCH (Services & Products)
     # ══════════════════════════════════════════════════════════════════════════
 
     @function_tool()
-    async def search_treatments(
+    async def search(
         self,
         context: RunContext_T,
         query: str,
         category: str,
-        mentioned_treatments: list[str] = None,
     ):
         """
-        MUST be called for ANY treatment-related query before responding.
-        Call this when user asks about: treatments, services, skincare, permanent makeup,
-        massage, pricing, or refines a previous search.
-        Even for vague queries like "Ich suche eine Behandlung" — call this first,
-        then ask clarifying questions.
+        Search for services or products offered by the company.
 
         Args:
             query: The user's search query
-            category: Determines which category of treatments to display in the frontend.
-                      Choose the MOST SUITABLE category based on what the user is asking about:
-
-                      - "treatments": Use when user asks about facial treatments (Gesichtsbehandlung),
-                        body treatments (Koerperbehandlung), pedicure (Fusspflege), manicure (Manikuere),
-                        skincare, anti-aging, hydration, peeling, or mentions Brigitte Kettner.
-
-                      - "permanent_makeup": Use when user asks about permanent makeup (Permanent Make-Up),
-                        eyebrow pigmentation (Augenbrauen), lip pigmentation (Lippen), eyeliner,
-                        or micropigmentation.
-
-                      - "wellness": Use when user asks about massage (Massage, Ganzkoerpermassage,
-                        Entspannungsmassage), relaxation, or Forma Radiofrequenz (RF technology,
-                        skin tightening, collagen stimulation).
-
-                      If unsure which category fits best, default to "treatments" as it is our main
-                      service area.
-
-            mentioned_treatments: IMPORTANT — Extract specific treatment names from the user's message.
-                                  Examples: "Gesichtsbehandlung" -> ["Gesichtsbehandlung"],
-                                  "Permanent Make-Up Lippen" -> ["Permanent Make-Up Lippen"],
-                                  "Forma" -> ["Forma Radiofrequenz"].
-                                  These treatments will be prioritized and shown first in the frontend.
+            category: MUST be one of:
+                      - "service": For beauty SERVICES (treatments, facials, massages,
+                        permanent makeup, wellness, skincare treatments)
+                      - "product": For retail PRODUCTS users can BUY (skincare products,
+                        gift sets, items for purchase)
         """
-        if mentioned_treatments is None:
-            mentioned_treatments = []
         try:
-            logger.info(
-                f"search_treatments: category={category}, "
-                f"mentioned={mentioned_treatments}, query={query!r}"
-            )
-            return await self._search_treatments_inner(query, category, mentioned_treatments)
+            logger.info(f"search: category={category}, query={query!r}")
+            return await self._search_inner(query, category)
         except Exception as e:
-            logger.error(f"search_treatments failed: {e}")
+            logger.error(f"search failed: {e}")
             return f"Search temporarily unavailable. Ask customer to try again. {lang_hint()}"
 
-    async def _search_treatments_inner(
+    async def _search_inner(
         self,
         query: str,
-        category: str = "treatments",
-        mentioned_treatments: list[str] = None,
+        category: str,
     ) -> str:
-        """Core search logic — queries Pinecone, sends to frontend, returns LLM context."""
-        if mentioned_treatments is None:
-            mentioned_treatments = []
-
+        """Core search logic — queries Pinecone index, sends to frontend, returns LLM context."""
         # Validate category
-        valid_categories = ["treatments", "permanent_makeup", "wellness"]
+        valid_categories = ["service", "product"]
         if category not in valid_categories:
-            logger.warning(f"Invalid category '{category}', defaulting to 'treatments'")
-            category = "treatments"
+            logger.warning(f"Invalid category '{category}', defaulting to 'service'")
+            category = "service"
 
         # Get conversation history
         history = self._chat_ctx.items
@@ -296,21 +272,28 @@ class ConversationAgent(Agent):
         ]
         last_user_msg = user_messages[-1] if user_messages else ""
 
-        # Query Pinecone for semantic search results
+        # Query Pinecone index based on category
         try:
-            search_results = await asyncio.to_thread(
-                self.search_pipeline.run,
-                query=last_user_msg,
-                top_k=5,
-            )
+            if category == "product":
+                search_results = await asyncio.to_thread(
+                    self.search_pipeline.search_products,
+                    query=last_user_msg,
+                    top_k=5,
+                )
+            else:
+                search_results = await asyncio.to_thread(
+                    self.search_pipeline.search_services,
+                    query=last_user_msg,
+                    top_k=5,
+                )
         except Exception as e:
             logger.error(f"Pinecone search failed: {e}")
             search_results = []
 
         # Format for LLM context
-        products_text = self._format_pinecone_results_for_llm(search_results)
+        results_text = self._format_pinecone_results_for_llm(search_results)
 
-        # Send treatments to frontend via "products" topic
+        # Send results to frontend via "products" topic
         try:
             frontend_payload = []
             for item in search_results[:5]:
@@ -318,11 +301,11 @@ class ConversationAgent(Agent):
                     "product_name": item.get("name", "Unknown"),
                     "url": item.get("url", ""),
                     "category": category,
-                    "image": [item.get("image_link", "")] if item.get("image_link") else [],
+                    "image": [item.get("image_link", "")] if item.get("image_link") else ["https://image.ayand.cloud/BL_logo.png"],
                 })
 
             logger.info(
-                f"Frontend treatments (category={category}): "
+                f"Frontend results (category={category}): "
                 f"{[p['product_name'] for p in frontend_payload]}"
             )
 
@@ -334,19 +317,20 @@ class ConversationAgent(Agent):
                     )
                 )
         except Exception as e:
-            logger.error(f"Failed to send treatments to frontend: {e}")
+            logger.error(f"Failed to send results to frontend: {e}")
 
         # Store results in userdata
         self.userdata.last_search_results = search_results[:5]
 
         # Build LLM context
+        category_label = "PRODUCT" if category == "product" else "SERVICE"
         context_parts = [
             f"USER QUERY: {last_user_msg}",
             f"SEARCH NUMBER: {self.userdata.search_count}",
             "",
-            "=== RELEVANT TREATMENT DATA ===",
-            products_text,
-            f"Also explain shortly about these treatments and their relation with user query: "
+            f"=== RELEVANT {category_label} DATA ===",
+            results_text,
+            f"Also explain shortly about these {category}s and their relation with user query: "
             f"{[p['product_name'] for p in frontend_payload]}",
         ]
 
@@ -395,6 +379,8 @@ class ConversationAgent(Agent):
         This sends Yes/No buttons to the frontend. Wait for the customer's response,
         then call handle_expert_response.
         """
+        if self.userdata.expert_offered:
+            return f"Expert connection already offered. Do not offer again. {lang_hint()}"
         self.userdata.expert_offered = True
         try:
             await self.room.local_participant.send_text(
@@ -470,7 +456,33 @@ class ConversationAgent(Agent):
         return f"Saved. Continue naturally. {lang_hint()}"
 
     # ══════════════════════════════════════════════════════════════════════════
-    # FUNCTION TOOL 6 — RECORD CONSENT
+    # FUNCTION TOOL 6a — SHOW CONSENT BUTTONS
+    # ══════════════════════════════════════════════════════════════════════════
+
+    @function_tool
+    async def show_consent_buttons(self, context: RunContext_T):
+        """
+        Call this BEFORE asking the customer for GDPR consent.
+        This sends Yes/No buttons to the frontend. Then ask verbally and wait
+        for the customer's response, then call record_consent.
+        """
+        if self.userdata.consent_buttons_shown:
+            return f"Consent buttons already shown. Do not show again. {lang_hint()}"
+        self.userdata.consent_buttons_shown = True
+        try:
+            await self.room.local_participant.send_text(
+                json.dumps(
+                    UI_BUTTONS.get("consent", {"Yes": "Yes", "No": "No"})
+                ),
+                topic="trigger",
+            )
+        except Exception as e:
+            logger.error(f"Failed to send consent buttons: {e}")
+        logger.info("Consent buttons sent to customer")
+        return f"Consent buttons sent. Now ask for consent verbally and wait for response. {lang_hint()}"
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # FUNCTION TOOL 6b — RECORD CONSENT
     # ══════════════════════════════════════════════════════════════════════════
 
     @function_tool
@@ -567,13 +579,13 @@ class ConversationAgent(Agent):
         )
 
     # ══════════════════════════════════════════════════════════════════════════
-    # FUNCTION TOOL 10 — SHOW FEATURED PRODUCTS
+    # FUNCTION TOOL 10 — SHOW FEATURED SERVICES
     # ══════════════════════════════════════════════════════════════════════════
 
     @function_tool
-    async def show_featured_products(self, context: RunContext_T):
+    async def show_featured_services(self, context: RunContext_T):
         """
-        Show a selection of featured treatments and services to the customer.
+        Show a selection of featured beauty SERVICES to the customer.
         Call this ONCE in your first response after the greeting to give the customer
         a visual overview. Do NOT call this again — it only works once.
         """
@@ -583,21 +595,23 @@ class ConversationAgent(Agent):
         self.userdata.featured_shown = True
 
         try:
-            from utils.data_loader import DataLoader
-            loader = DataLoader()
+            # Query Pinecone for featured services
+            featured_results = await asyncio.to_thread(
+                self.search_pipeline.get_featured_services,
+                treatments_count=3,
+                pmu_count=2,
+                wellness_count=2,
+            )
+
             showcase = []
-            for category, items in [
-                ("treatments", loader.load_treatments()[:3]),
-                ("permanent_makeup", loader.load_permanent_makeup()[:2]),
-                ("wellness", loader.load_wellness()[:2]),
-            ]:
-                for item in items:
-                    showcase.append({
-                        "product_name": item.get("name", "Unknown"),
-                        "url": item.get("url", ""),
-                        "category": category,
-                        "image": [item.get("image", "")] if item.get("image") else [],
-                    })
+            for item in featured_results:
+                category = item.get("category", "treatments")
+                showcase.append({
+                    "product_name": item.get("name", "Unknown"),
+                    "url": item.get("url", ""),
+                    "category": category,
+                    "image": [item.get("image_link", "")] if item.get("image_link") else ["https://image.ayand.cloud/BL_logo.png"],
+                })
 
             if showcase:
                 asyncio.create_task(
@@ -605,11 +619,11 @@ class ConversationAgent(Agent):
                         json.dumps(showcase), topic="products"
                     )
                 )
-                logger.info(f"Featured products sent: {[p['product_name'] for p in showcase]}")
+                logger.info(f"Featured services sent: {[p['product_name'] for p in showcase]}")
         except Exception as e:
-            logger.error(f"Failed to send featured products: {e}")
+            logger.error(f"Failed to send featured services: {e}")
 
-        return f"Treatments displayed. Continue naturally. {lang_hint()}"
+        return f"Services displayed. Continue naturally. {lang_hint()}"
 
     # ══════════════════════════════════════════════════════════════════════════
     # TRANSCRIPTION — streams text to frontend via "message" topic

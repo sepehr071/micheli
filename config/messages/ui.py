@@ -23,6 +23,7 @@ def get_ui_buttons_config():
     # or a specific type based on how it's called
     return {
         "expert_offer": get_ui_buttons("expert_offer"),
+        "consent": get_ui_buttons("consent"),
         "appointment_confirm": get_ui_buttons("appointment_confirm"),
         "summary_offer": get_ui_buttons("summary_offer"),
         "new_conversation": get_ui_buttons("new_conversation"),

@@ -79,7 +79,7 @@ The main brain. Extends `Agent` directly. Handles the full conversation lifecycl
 4. **After contact info — Consent**: Ask explicit GDPR consent to be contacted
 5. **Wrap-up**: Confirm everything, hand off to CompletionAgent
 
-**10 function tools:**
+**11 function tools:**
 
 | Tool | Purpose |
 |------|---------|
@@ -89,6 +89,7 @@ The main brain. Extends `Agent` directly. Handles the full conversation lifecycl
 | `offer_expert_connection()` | Send Yes/No buttons via `"trigger"` topic |
 | `handle_expert_response(accepted)` | Record customer's Yes/No response |
 | `save_contact_info(name?, email?, phone?, preferred_contact?)` | Incremental contact collection — all params optional |
+| `show_consent_buttons()` | Send GDPR consent Yes/No buttons via `"trigger"` topic |
 | `record_consent(consent)` | GDPR consent to be contacted |
 | `schedule_appointment(date, time)` | Save preferred appointment |
 | `save_conversation_summary(summary)` | Agent-written conversation brief |
@@ -111,7 +112,8 @@ Shared foundation for sub-agents. Provides:
 - `create_realtime_model()` — retry wrapper for model init (3x)
 - Language injection — wraps prompts with language prefix/suffix
 - `transcription_node()` — streams agent responses to frontend via `"message"` topic
-- Data listener for language changes from frontend
+- Data listener for language changes (`"language"` topic) and button responses (`"trigger"` topic) from frontend
+- Button-as-input: when "new conversation" button click is received via `"trigger"` topic, calls `session.generate_reply(user_input=...)` to restart
 - `save_conversation_summary()` function tool
 
 ### Session State: `core/session_state.py`
@@ -208,12 +210,16 @@ Agent communicates with the web frontend via **LiveKit Room Topics** (JSON paylo
 | `"message"` | Agent → Frontend | `{"agent_response": "text"}` |
 | `"products"` | Agent → Frontend | `[{product details}]` |
 | `"trigger"` | Agent → Frontend | `{"Ja": "Ja", "Nein": "Nein"}` (buttons) |
+| `"trigger"` | Frontend → Agent | Button click response (key from button payload) |
 | `"language"` | Frontend → Agent | `{"language": "de"}` |
 | `"clean"` | Agent → Frontend | `{"clean": true}` (reset UI) |
 
-Buttons are shown only for:
-- **Expert offer** (Ja/Nein) — when offering to connect with Patrizia
-- **Appointment confirmation** (Ja/Nein) — when confirming scheduled appointment
+Buttons are shown for:
+- **Expert offer** (Yes/No) — when offering to connect with Patrizia
+- **GDPR consent** (Yes/No) — when asking permission to use contact info
+- **Appointment confirmation** (Yes/No) — when confirming scheduled appointment
+- **Summary offer** (Yes/No) — when offering to email conversation summary
+- **New conversation** — restart button after conversation ends (acts as user text input via `session.generate_reply`)
 
 ### Key Patterns
 - **Tool return values**: All function tools return **English** confirmation strings with `lang_hint()` appended (e.g. `f"Saved. Continue naturally. {lang_hint()}"`). This is critical — the OpenAI Realtime API in LiveKit Agents SDK v1.2.14 does not reliably generate follow-up speech when a tool returns `None`. The `lang_hint()` reinforces the target language on every tool call. Exception: `CompletionAgent` tools use `_safe_reply()` instead (explicit `generate_reply()` calls), so they don't need return strings.
@@ -225,8 +231,9 @@ Buttons are shown only for:
 - **LLM-driven lead scoring**: The realtime model judges customer interest via function tool — no hardcoded keyword lists
 - **Contact collection rules**: Name + (email OR phone) + consent required for handoff. If user says "call me" → `preferred_contact="phone"` is set and phone becomes mandatory. Prompt-driven detection via `save_contact_info(preferred_contact="phone")`.
 - **Proactive lead capture**: From round 2-3, agent answers the question AND naturally asks for name/contact at the end
-- **GDPR consent**: Agent must ask for explicit consent before contact info can be used
+- **GDPR consent**: Agent calls `show_consent_buttons()` to display Yes/No buttons, then asks verbally. Both button click and voice response are accepted. Consent must be recorded via `record_consent()` before handoff
 - **Agent-written summary**: `save_conversation_summary()` function tool lets the realtime model write conversation briefs during the conversation (no separate LLM call needed)
+- **Button-as-input restart**: `BaseAgent._handle_data_received()` listens for `"trigger"` topic responses. When a "new conversation" button key (matched against `_NEW_CONV_KEYS` built from all 10 languages) is detected, it calls `session.generate_reply(user_input="I want to start a new conversation")` — the LLM then calls `start_new_conversation()` for a clean restart
 - **Safety net on disconnect**: Regex extracts email from transcript if user disconnects before agent stores it
 
 ## Logging

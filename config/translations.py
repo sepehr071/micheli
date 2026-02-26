@@ -23,6 +23,7 @@ from config.language import language_manager
 UI_BUTTONS_TRANSLATIONS = {
     "en": {
         "expert_offer": {"Yes": "Yes", "No": "No"},
+        "consent": {"Yes": "Yes", "No": "No"},
         "appointment_confirm": {
             "Yes_please_send_me_an_appointment": "Yes",
             "No_please_dont_send_me_an_appointment": "No",
@@ -37,6 +38,7 @@ UI_BUTTONS_TRANSLATIONS = {
     },
     "de": {
         "expert_offer": {"Ja": "Ja", "Nein": "Nein"},
+        "consent": {"Ja": "Ja", "Nein": "Nein"},
         "appointment_confirm": {
             "Ja_bitte_sende_mir_einen_Termin": "Ja",
             "Nein_bitte_sende_mir_keinen_Termin": "Nein",
@@ -51,6 +53,7 @@ UI_BUTTONS_TRANSLATIONS = {
     },
     "tr": {
         "expert_offer": {"Evet": "Evet", "Hayır": "Hayır"},
+        "consent": {"Evet": "Evet", "Hayır": "Hayır"},
         "appointment_confirm": {
             "Evet_lütfen_bana_randevu_gönder": "Evet",
             "Hayır_lütfen_bana_randevu_gönderme": "Hayır",
@@ -65,6 +68,7 @@ UI_BUTTONS_TRANSLATIONS = {
     },
     "es": {
         "expert_offer": {"Sí": "Sí", "No": "No"},
+        "consent": {"Sí": "Sí", "No": "No"},
         "appointment_confirm": {
             "Sí_por_favor_envíame_cita": "Sí",
             "No_por_favor_no_me_envíes_cita": "No",
@@ -79,6 +83,7 @@ UI_BUTTONS_TRANSLATIONS = {
     },
     "fr": {
         "expert_offer": {"Oui": "Oui", "Non": "Non"},
+        "consent": {"Oui": "Oui", "Non": "Non"},
         "appointment_confirm": {
             "Oui_sil_vous_plaît_envoyez_moi_un_rendez_vous": "Oui",
             "Non_sil_vous_plaît_ne_m_envoyez_pas_de_rendez_vous": "Non",
@@ -93,6 +98,7 @@ UI_BUTTONS_TRANSLATIONS = {
     },
     "it": {
         "expert_offer": {"Sì": "Sì", "No": "No"},
+        "consent": {"Sì": "Sì", "No": "No"},
         "appointment_confirm": {
             "Sì_per_favore_inviami_un_appuntamento": "Sì",
             "No_per_favore_non_inviarmi_un_appuntamento": "No",
@@ -107,6 +113,7 @@ UI_BUTTONS_TRANSLATIONS = {
     },
     "pt": {
         "expert_offer": {"Sim": "Sim", "Não": "Não"},
+        "consent": {"Sim": "Sim", "Não": "Não"},
         "appointment_confirm": {
             "Sim_por_favor_envie_me_um_compromisso": "Sim",
             "Não_por_favor_não_me_envie_compromisso": "Não",
@@ -121,6 +128,7 @@ UI_BUTTONS_TRANSLATIONS = {
     },
     "nl": {
         "expert_offer": {"Ja": "Ja", "Nee": "Nee"},
+        "consent": {"Ja": "Ja", "Nee": "Nee"},
         "appointment_confirm": {
             "Ja_stuur_mijn_alstublieft_een_afpraak": "Ja",
             "Nee_stuur_mijn_alstublieft_geen_afpraak": "Nee",
@@ -135,6 +143,7 @@ UI_BUTTONS_TRANSLATIONS = {
     },
     "pl": {
         "expert_offer": {"Tak": "Tak", "Nie": "Nie"},
+        "consent": {"Tak": "Tak", "Nie": "Nie"},
         "appointment_confirm": {
             "Tak_proszę_wyślij_mi_umówienie": "Tak",
             "Nie_proszę_nie_wysyłaj_mi_umówienia": "Nie",
@@ -149,6 +158,7 @@ UI_BUTTONS_TRANSLATIONS = {
     },
     "ar": {
         "expert_offer": {"نعم": "نعم", "لا": "لا"},
+        "consent": {"نعم": "نعم", "لا": "لا"},
         "appointment_confirm": {
             "نعم_يرجى_إرسال_موعد_لي": "نعم",
             "لا_يرجى_عدم_إرسال_موعد_لي": "لا",

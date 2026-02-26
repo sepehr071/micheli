@@ -17,12 +17,18 @@ from core.session_state import UserData, RunContext_T
 from config.settings import RT_MODEL, LLM_TEMPERATURE
 from config.messages import AGENT_MESSAGES
 from config.language import get_language_instruction, get_language_prefix, handle_language_update, language_manager, lang_hint
+from config.translations import UI_BUTTONS_TRANSLATIONS
 import prompt.static_workflow as prompts
 
 logger = logging.getLogger(__name__)
 
 REPLY_MAX_RETRIES = 3
 REPLY_BACKOFF = 1.0
+
+# Collect all "new conversation" button keys across all languages for matching
+_NEW_CONV_KEYS = set()
+for _lang_buttons in UI_BUTTONS_TRANSLATIONS.values():
+    _NEW_CONV_KEYS.update(k.lower() for k in _lang_buttons.get("new_conversation", {}))
 MODEL_MAX_RETRIES = 3
 MODEL_BACKOFF = 2.0
 
@@ -133,6 +139,26 @@ class BaseAgent(Agent):
                     await self._update_agent_instructions()
                 else:
                     logger.warning(f"Failed to update language: {parsed}")
+
+            # Check if this is a button response (topic: "trigger")
+            elif data.topic == "trigger":
+                logger.info(f"Received trigger response: {parsed}")
+                keys = parsed.keys() if isinstance(parsed, dict) else [parsed]
+                for key in keys:
+                    if str(key).lower() in _NEW_CONV_KEYS:
+                        logger.info("New conversation button clicked — injecting as user input")
+                        if hasattr(self, "session") and self.session:
+                            await self.session.generate_reply(
+                                user_input="I want to start a new conversation"
+                            )
+                        return
+                # Fallback: inject button value as user input for all other buttons
+                if isinstance(parsed, dict):
+                    value = next(iter(parsed.values()), None)
+                    if value and hasattr(self, "session") and self.session:
+                        logger.info(f"Button clicked — injecting as user input: {value}")
+                        await self.session.generate_reply(user_input=str(value))
+                        return
 
         except json.JSONDecodeError as e:
             logger.debug(f"Data received is not valid JSON: {e}")
